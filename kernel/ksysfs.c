@@ -19,6 +19,7 @@
 #include <linux/sched.h>
 #include <linux/capability.h>
 #include <linux/compiler.h>
+#include <linux/device.h>
 
 #include <linux/rcupdate.h>	/* rcu_expedited and rcu_normal */
 
@@ -144,6 +145,32 @@ static ssize_t fscaps_show(struct kobject *kobj,
 }
 KERNEL_ATTR_RO(fscaps);
 
+/* Disable/reenable device probing*/
+static ssize_t disable_device_probe_show(struct kobject *kobj,
+					 struct kobj_attribute *attr,
+					 char *buf)
+{
+	return sprintf(buf, "%d\n", device_probing_deferred());
+}
+
+static ssize_t disable_device_probe_store(struct kobject *kobj,
+					  struct kobj_attribute *attr,
+					  const char *buf, size_t count)
+{
+	bool disable_probing;
+
+	if (kstrtobool(buf, &disable_probing))
+		return -EINVAL;
+
+	if (disable_probing)
+		device_block_probing();
+	else
+		device_unblock_probing();
+
+	return count;
+}
+KERNEL_ATTR_RW(disable_device_probe);
+
 #ifndef CONFIG_TINY_RCU
 int rcu_expedited;
 static ssize_t rcu_expedited_show(struct kobject *kobj,
@@ -225,6 +252,7 @@ static struct attribute * kernel_attrs[] = {
 	&rcu_expedited_attr.attr,
 	&rcu_normal_attr.attr,
 #endif
+	&disable_device_probe_attr.attr,
 	NULL
 };
 

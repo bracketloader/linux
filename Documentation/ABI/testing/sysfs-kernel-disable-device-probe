@@ -1,0 +1,10 @@
+What:		/sys/kernel/disable_device_probe
+Date:		December 2016
+KernelVersion:	4.11
+Contact:	Matthew Garrett <mjg59@srcf.ucam.org>
+Description
+		Disables automatic driver probing of any newly added devices.
+		If "1", driver probing is disabled - any newly added devices
+		will not have a driver bound to them. If "0", newly added
+		devices will be probed, along with any devices connected while
+		"1" was set.

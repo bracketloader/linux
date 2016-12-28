@@ -191,6 +191,16 @@ static void driver_deferred_probe_trigger(void)
 }
 
 /**
+ * device_probing_deferred() - Get the current state of device probing
+ *
+ *	Returns whether or not device probing is currently deferred
+ */
+bool device_probing_deferred(void)
+{
+	return defer_all_probes;
+}
+
+/**
  * device_block_probing() - Block/defere device's probes
  *
  *	It will disable probing of devices and defer their probes instead.

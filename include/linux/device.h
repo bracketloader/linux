@@ -43,6 +43,10 @@ struct iommu_ops;
 struct iommu_group;
 struct iommu_fwspec;
 
+extern bool device_probing_deferred(void);
+extern void device_block_probing(void);
+extern void device_unblock_probing(void);
+
 struct bus_attribute {
 	struct attribute	attr;
 	ssize_t (*show)(struct bus_type *bus, char *buf);

@@ -59,6 +59,8 @@ struct suspend_stats suspend_stats;
 static DEFINE_MUTEX(dpm_list_mtx);
 static pm_message_t pm_transition;
 
+static bool probing_deferred;
+
 static int async_error;
 
 static char *pm_verb(int event)
@@ -1024,8 +1026,12 @@ void dpm_complete(pm_message_t state)
 	list_splice(&list, &dpm_list);
 	mutex_unlock(&dpm_list_mtx);
 
-	/* Allow device probing and trigger re-probing of deferred devices */
-	device_unblock_probing();
+	/*
+	 * Allow device probing and trigger re-probing of deferred devices
+	 * unless userspace has explicitly disabled probing
+	 */
+	if (!probing_deferred)
+		device_unblock_probing();
 	trace_suspend_resume(TPS("dpm_complete"), state.event, false);
 }
 
@@ -1714,8 +1720,12 @@ int dpm_prepare(pm_message_t state)
 	 * hibernation and system behavior will be unpredictable in this case.
 	 * So, let's prohibit device's probing here and defer their probes
 	 * instead. The normal behavior will be restored in dpm_complete().
+	 * Skip this if probing is already deferred, otherwise we'll override
+	 * explicitly configured state.
 	 */
-	device_block_probing();
+	probing_deferred = device_probing_deferred();
+	if (!probing_deferred)
+		device_block_probing();
 
 	mutex_lock(&dpm_list_mtx);
 	while (!list_empty(&dpm_list)) {
