@@ -112,7 +112,8 @@ extern void device_release_driver_internal(struct device *dev,
 					   struct device *parent);
 
 extern void driver_detach(struct device_driver *drv);
-extern int driver_probe_device(struct device_driver *drv, struct device *dev);
+extern int driver_probe_device(struct device_driver *drv, struct device *dev,
+			       bool force);
 extern void driver_deferred_probe_del(struct device *dev);
 static inline int driver_match_device(struct device_driver *drv,
 				      struct device *dev)
@@ -140,6 +141,7 @@ extern struct kset *devices_kset;
 extern void devices_kset_move_last(struct device *dev);
 
 extern struct device_attribute dev_attr_deferred_probe;
+extern struct device_attribute dev_attr_force_probe;
 
 #if defined(CONFIG_MODULES) && defined(CONFIG_SYSFS)
 extern void module_add_driver(struct module *mod, struct device_driver *drv);

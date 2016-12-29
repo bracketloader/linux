@@ -344,14 +344,15 @@ EXPORT_SYMBOL_GPL(device_bind_driver);
 static atomic_t probe_count = ATOMIC_INIT(0);
 static DECLARE_WAIT_QUEUE_HEAD(probe_waitqueue);
 
-static int really_probe(struct device *dev, struct device_driver *drv)
+static int really_probe(struct device *dev, struct device_driver *drv,
+			bool force)
 {
 	int ret = -EPROBE_DEFER;
 	int local_trigger_count = atomic_read(&deferred_trigger_count);
 	bool test_remove = IS_ENABLED(CONFIG_DEBUG_TEST_DRIVER_REMOVE) &&
 			   !drv->suppress_bind_attrs;
 
-	if (defer_all_probes) {
+	if (defer_all_probes && !force) {
 		/*
 		 * Value of defer_all_probes can be set only by
 		 * device_defer_all_probes_enable() which, in turn, will call
@@ -527,7 +528,8 @@ EXPORT_SYMBOL_GPL(wait_for_device_probe);
  *
  * If the device has a parent, runtime-resume the parent before driver probing.
  */
-int driver_probe_device(struct device_driver *drv, struct device *dev)
+int driver_probe_device(struct device_driver *drv, struct device *dev,
+			bool force)
 {
 	int ret = 0;
 
@@ -542,7 +544,7 @@ int driver_probe_device(struct device_driver *drv, struct device *dev)
 		pm_runtime_get_sync(dev->parent);
 
 	pm_runtime_barrier(dev);
-	ret = really_probe(dev, drv);
+	ret = really_probe(dev, drv, force);
 	pm_request_idle(dev);
 
 	if (dev->parent)
@@ -600,6 +602,12 @@ struct device_attach_data {
 	 * driver, we'll encounter one that requests asynchronous probing.
 	 */
 	bool have_async;
+
+	/*
+	 * Indicate whether probing should be forced even if defer_all_probes
+	 * is set
+	 */
+	bool force;
 };
 
 static int __device_attach_driver(struct device_driver *drv, void *_data)
@@ -638,7 +646,7 @@ static int __device_attach_driver(struct device_driver *drv, void *_data)
 	if (data->check_async && async_allowed != data->want_async)
 		return 0;
 
-	return driver_probe_device(drv, dev);
+	return driver_probe_device(drv, dev, data->force);
 }
 
 static void __device_attach_async_helper(void *_dev, async_cookie_t cookie)
@@ -648,6 +656,7 @@ static void __device_attach_async_helper(void *_dev, async_cookie_t cookie)
 		.dev		= dev,
 		.check_async	= true,
 		.want_async	= true,
+		.force		= false,
 	};
 
 	device_lock(dev);
@@ -668,7 +677,7 @@ static void __device_attach_async_helper(void *_dev, async_cookie_t cookie)
 	put_device(dev);
 }
 
-static int __device_attach(struct device *dev, bool allow_async)
+static int __device_attach(struct device *dev, bool allow_async, bool force)
 {
 	int ret = 0;
 
@@ -690,6 +699,7 @@ static int __device_attach(struct device *dev, bool allow_async)
 			.dev = dev,
 			.check_async = allow_async,
 			.want_async = false,
+			.force = force,
 		};
 
 		if (dev->parent)
@@ -736,13 +746,34 @@ out_unlock:
  */
 int device_attach(struct device *dev)
 {
-	return __device_attach(dev, false);
+	return __device_attach(dev, false, false);
 }
 EXPORT_SYMBOL_GPL(device_attach);
 
+/*
+ * Allow userspace to trigger the probing of a device even if driver probing
+ * is currently forcibly deferred
+ */
+static ssize_t force_probe_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	int ret = __device_attach(dev, false, true);
+	if (ret < 0)
+		return ret;
+	return count;
+}
+
+static ssize_t force_probe_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", device_is_bound(dev));
+}
+DEVICE_ATTR_RW(force_probe);
+
 void device_initial_probe(struct device *dev)
 {
-	__device_attach(dev, true);
+	__device_attach(dev, true, false);
 }
 
 static int __driver_attach(struct device *dev, void *data)
@@ -776,7 +807,7 @@ static int __driver_attach(struct device *dev, void *data)
 		device_lock(dev->parent);
 	device_lock(dev);
 	if (!dev->driver)
-		driver_probe_device(drv, dev);
+		driver_probe_device(drv, dev, false);
 	device_unlock(dev);
 	if (dev->parent)
 		device_unlock(dev->parent);

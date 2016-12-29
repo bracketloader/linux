@@ -216,7 +216,7 @@ static ssize_t bind_store(struct device_driver *drv, const char *buf,
 		if (dev->parent)	/* Needed for USB */
 			device_lock(dev->parent);
 		device_lock(dev);
-		err = driver_probe_device(drv, dev);
+		err = driver_probe_device(drv, dev, true);
 		device_unlock(dev);
 		if (dev->parent)
 			device_unlock(dev->parent);

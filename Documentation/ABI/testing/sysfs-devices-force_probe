@@ -1,0 +1,9 @@
+What:		/sys/devices/.../force_probe
+Date:		August 2016
+Contact:	Matthew Garrett <mjg59@srcf.ucam.org>
+Description:
+		The /sys/devices/.../force_probe attribute is
+		present for all devices. If deferred probing is globally
+		enabled and the device has no driver bound, a write to this
+		node will trigger probing. This attribute reads as 1 if the
+		device currently has a driver bound, and 0 otherwise.

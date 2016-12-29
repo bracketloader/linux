@@ -1064,8 +1064,13 @@ static int device_add_attrs(struct device *dev)
 	if (error)
 		goto err_remove_online;
 
-	return 0;
+	error = device_create_file(dev, &dev_attr_force_probe);
+	if (error)
+		goto err_remove_deferred_probe;
 
+	return 0;
+ err_remove_deferred_probe:
+	device_remove_file(dev, &dev_attr_deferred_probe);
  err_remove_online:
 	device_remove_file(dev, &dev_attr_online);
  err_remove_dev_groups:
