@@ -958,7 +958,9 @@ static int load_flat_binary(struct linux_binprm *bprm)
 		}
 	}
 
-	install_exec_creds(bprm);
+	retval = install_exec_creds(bprm);
+	if (retval)
+		return retval;
 
 	set_binfmt(&flat_format);
 

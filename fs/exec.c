@@ -1418,8 +1418,10 @@ EXPORT_SYMBOL(bprm_change_interp);
 /*
  * install the new credentials for this executable
  */
-void install_exec_creds(struct linux_binprm *bprm)
+int install_exec_creds(struct linux_binprm *bprm)
 {
+	int ret = 0;
+
 	security_bprm_committing_creds(bprm);
 
 	commit_creds(bprm->cred);
@@ -1438,8 +1440,10 @@ void install_exec_creds(struct linux_binprm *bprm)
 	 * ptrace_attach() from altering our determination of the task's
 	 * credentials; any time after this it may be unlocked.
 	 */
-	security_bprm_committed_creds(bprm);
+	ret = security_bprm_committed_creds(bprm);
 	mutex_unlock(&current->signal->cred_guard_mutex);
+
+	return ret;
 }
 EXPORT_SYMBOL(install_exec_creds);
 

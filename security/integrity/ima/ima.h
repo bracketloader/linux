@@ -177,6 +177,7 @@ static inline unsigned long ima_hash_key(u8 *digest)
 	hook(FILE_CHECK)		\
 	hook(MMAP_CHECK)		\
 	hook(BPRM_CHECK)		\
+	hook(CREDS_CHECK)		\
 	hook(POST_SETATTR)		\
 	hook(MODULE_CHECK)		\
 	hook(FIRMWARE_CHECK)		\

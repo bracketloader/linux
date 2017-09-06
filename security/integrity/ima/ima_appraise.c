@@ -86,6 +86,8 @@ enum integrity_status ima_get_cache_status(struct integrity_iint_cache *iint,
 		return iint->ima_mmap_status;
 	case BPRM_CHECK:
 		return iint->ima_bprm_status;
+	case CREDS_CHECK:
+		return iint->ima_creds_status;
 	case FILE_CHECK:
 	case POST_SETATTR:
 		return iint->ima_file_status;
@@ -105,6 +107,9 @@ static void ima_set_cache_status(struct integrity_iint_cache *iint,
 		break;
 	case BPRM_CHECK:
 		iint->ima_bprm_status = status;
+		break;
+	case CREDS_CHECK:
+		iint->ima_creds_status = status;
 		break;
 	case FILE_CHECK:
 	case POST_SETATTR:
@@ -126,6 +131,9 @@ static void ima_cache_flags(struct integrity_iint_cache *iint,
 		break;
 	case BPRM_CHECK:
 		iint->flags |= (IMA_BPRM_APPRAISED | IMA_APPRAISED);
+		break;
+	case CREDS_CHECK:
+		iint->flags |= (IMA_CREDS_APPRAISED | IMA_APPRAISED);
 		break;
 	case FILE_CHECK:
 	case POST_SETATTR:

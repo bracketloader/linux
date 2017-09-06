@@ -165,7 +165,7 @@ err_out:
  * The policy is defined in terms of keypairs:
  *		subj=, obj=, type=, func=, mask=, fsmagic=
  *	subj,obj, and type: are LSM specific.
- *	func: FILE_CHECK | BPRM_CHECK | MMAP_CHECK | MODULE_CHECK
+ *	func: FILE_CHECK | BPRM_CHECK | CREDS_CHECK | MMAP_CHECK | MODULE_CHECK
  *	mask: contains the permission mask
  *	fsmagic: hex value
  *

@@ -16,6 +16,7 @@ struct linux_binprm;
 
 #ifdef CONFIG_IMA
 extern int ima_bprm_check(struct linux_binprm *bprm);
+extern int ima_creds_check(struct linux_binprm *bprm);
 extern int ima_file_check(struct file *file, int mask, int opened);
 extern void ima_file_free(struct file *file);
 extern int ima_file_mmap(struct file *file, unsigned long prot);
@@ -30,6 +31,11 @@ extern void ima_add_kexec_buffer(struct kimage *image);
 
 #else
 static inline int ima_bprm_check(struct linux_binprm *bprm)
+{
+	return 0;
+}
+
+static inline int ima_creds_check(struct linux_binprm *bprm)
 {
 	return 0;
 }

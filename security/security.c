@@ -346,9 +346,10 @@ void security_bprm_committing_creds(struct linux_binprm *bprm)
 	call_void_hook(bprm_committing_creds, bprm);
 }
 
-void security_bprm_committed_creds(struct linux_binprm *bprm)
+int security_bprm_committed_creds(struct linux_binprm *bprm)
 {
 	call_void_hook(bprm_committed_creds, bprm);
+	return ima_creds_check(bprm);
 }
 
 int security_bprm_secureexec(struct linux_binprm *bprm)

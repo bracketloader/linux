@@ -14,7 +14,7 @@
  *
  * File: ima_main.c
  *	implements the IMA hooks: ima_bprm_check, ima_file_mmap,
- *	and ima_file_check.
+ *	ima_creds_check and ima_file_check.
  */
 #include <linux/module.h>
 #include <linux/file.h>
@@ -304,6 +304,28 @@ int ima_bprm_check(struct linux_binprm *bprm)
 {
 	return process_measurement(bprm->file, NULL, 0, MAY_EXEC,
 				   BPRM_CHECK, 0);
+}
+
+/**
+ * ima_creds_check - based on policy, collect/store measurement.
+ * @bprm: contains the linux_binprm structure
+ *
+ * The OS protects against an executable file, already open for write,
+ * from being executed in deny_write_access() and an executable file,
+ * already open for execute, from being modified in get_write_access().
+ * So we can be certain that what we verify and measure here is actually
+ * what is being executed.
+ *
+ * This is identical to ima_bprm_check, except called after child credentials
+ * have been committed.
+ *
+ * On success return 0.  On integrity appraisal error, assuming the file
+ * is in policy and IMA-appraisal is in enforcing mode, return -EACCES.
+ */
+int ima_creds_check(struct linux_binprm *bprm)
+{
+	return process_measurement(bprm->file, NULL, 0, MAY_EXEC,
+				   CREDS_CHECK, 0);
 }
 
 /**
