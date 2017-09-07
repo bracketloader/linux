@@ -528,6 +528,65 @@ fail:
 	return 0;
 }
 
+static bool unpack_xattrs(struct aa_ext *e, struct aa_profile *profile)
+{
+	void *pos = e->pos;
+
+	if (unpack_nameX(e, AA_STRUCT, "xattrs")) {
+		int i, size;
+
+		size = unpack_array(e, NULL);
+		profile->xattr_count = size;
+		profile->xattrs = kmalloc_array(size, sizeof(char *),
+						GFP_KERNEL);
+		if (!profile->xattrs)
+			goto fail;
+		for (i = 0; i < size; i++) {
+			if (!unpack_str(e, &profile->xattrs[i], NULL))
+				goto fail;
+		}
+		if (!unpack_nameX(e, AA_ARRAYEND, NULL))
+			goto fail;
+		if (!unpack_nameX(e, AA_STRUCTEND, NULL))
+			goto fail;
+	}
+
+	if (unpack_nameX(e, AA_STRUCT, "xattr_values")) {
+		int i, size;
+
+		size = unpack_array(e, NULL);
+
+		/* Must be the same number of xattr values as xattrs */
+		if (size != profile->xattr_count)
+			goto fail;
+
+		profile->xattr_lens = kmalloc_array(size, sizeof(size_t),
+						    GFP_KERNEL);
+		if (!profile->xattr_lens)
+			goto fail;
+
+		profile->xattr_values = kmalloc_array(size, sizeof(char *),
+						      GFP_KERNEL);
+		if (!profile->xattr_values)
+			goto fail;
+
+		for (i = 0; i < size; i++) {
+			profile->xattr_lens[i] = unpack_blob(e,
+					      &profile->xattr_values[i], NULL);
+		}
+
+		if (!unpack_nameX(e, AA_ARRAYEND, NULL))
+			goto fail;
+		if (!unpack_nameX(e, AA_STRUCTEND, NULL))
+			goto fail;
+	}
+	return 1;
+
+fail:
+	e->pos = pos;
+	return 0;
+}
+
 static bool unpack_rlimits(struct aa_ext *e, struct aa_profile *profile)
 {
 	void *pos = e->pos;
@@ -723,6 +782,11 @@ static struct aa_profile *unpack_profile(struct aa_ext *e, char **ns_name)
 			goto fail;
 		if (!unpack_nameX(e, AA_STRUCTEND, NULL))
 			goto fail;
+	}
+
+	if (!unpack_xattrs(e, profile)) {
+		info = "failed to unpack profile xattrs";
+		goto fail;
 	}
 
 	if (!unpack_rlimits(e, profile)) {

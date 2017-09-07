@@ -19,6 +19,7 @@
 #include <linux/syscalls.h>
 #include <linux/tracehook.h>
 #include <linux/personality.h>
+#include <linux/xattr.h>
 
 #include "include/audit.h"
 #include "include/apparmorfs.h"
@@ -302,6 +303,53 @@ static int change_profile_perms(struct aa_profile *profile,
 }
 
 /**
+ * aa_xattrs_match - check whether a file matches the xattrs defined in profile
+ * @bprm: binprm struct for the process to validate
+ * @profile: profile to match against (NOT NULL)
+ *
+ * Returns: number of extended attributes that matched, or < 0 on error
+ */
+static int aa_xattrs_match(const struct linux_binprm *bprm,
+			   struct aa_profile *profile)
+{
+	int i;
+	size_t size;
+	struct dentry *d;
+	char *value = NULL;
+	int value_size = 0, ret = profile->xattr_count;
+
+	if (!bprm || !profile->xattr_count)
+		return 0;
+
+	d = bprm->file->f_path.dentry;
+
+	for (i = 0; i < profile->xattr_count; i++) {
+		size = vfs_getxattr_alloc(d, profile->xattrs[i], &value,
+					  value_size, GFP_KERNEL);
+		if (size < 0) {
+			ret = -EINVAL;
+			goto out;
+		}
+
+		if (profile->xattr_lens[i]) {
+			if (profile->xattr_lens[i] != size) {
+				ret = -EINVAL;
+				goto out;
+			}
+
+			if (memcmp(value, profile->xattr_values[i], size)) {
+				ret = -EINVAL;
+				goto out;
+			}
+		}
+	}
+
+out:
+	kfree(value);
+	return ret;
+}
+
+/**
  * __attach_match_ - find an attachment match
  * @name - to match against  (NOT NULL)
  * @head - profile list to walk  (NOT NULL)
@@ -315,25 +363,44 @@ static int change_profile_perms(struct aa_profile *profile,
  *
  * Returns: profile or NULL if no match found
  */
-static struct aa_profile *__attach_match(const char *name,
+static struct aa_profile *__attach_match(const struct linux_binprm *bprm,
+					 const char *name,
 					 struct list_head *head)
 {
 	int len = 0;
+	int xattrs = 0;
+
 	struct aa_profile *profile, *candidate = NULL;
 
 	list_for_each_entry_rcu(profile, head, base.list) {
 		if (profile->label.flags & FLAG_NULL)
 			continue;
-		if (profile->xmatch && profile->xmatch_len > len) {
+		if (profile->xmatch && profile->xmatch_len >= len) {
 			unsigned int state = aa_dfa_match(profile->xmatch,
 							  DFA_START, name);
 			u32 perm = dfa_user_allow(profile->xmatch, state);
 			/* any accepting state means a valid match. */
 			if (perm & MAY_EXEC) {
-				candidate = profile;
-				len = profile->xmatch_len;
+				int ret = aa_xattrs_match(bprm, profile);
+
+				/* If the xattrs don't match, continue */
+				if (ret < 0)
+					continue;
+
+				/* Match if the xattr count is more
+				 * specific or if the match length is
+				 * longer
+				 */
+				if (ret > xattrs ||
+				    profile->xmatch_len > len) {
+					xattrs = ret;
+					candidate = profile;
+					len = profile->xmatch_len;
+					continue;
+				}
 			}
-		} else if (!strcmp(profile->base.name, name))
+		} else if (!strcmp(profile->base.name, name) &&
+			   aa_xattrs_match(bprm, profile) >= 0)
 			/* exact non-re match, no more searching required */
 			return profile;
 	}
@@ -349,13 +416,14 @@ static struct aa_profile *__attach_match(const char *name,
  *
  * Returns: label or NULL if no match found
  */
-static struct aa_label *find_attach(struct aa_ns *ns, struct list_head *list,
+static struct aa_label *find_attach(const struct linux_binprm *bprm,
+				    struct aa_ns *ns, struct list_head *list,
 				    const char *name)
 {
 	struct aa_profile *profile;
 
 	rcu_read_lock();
-	profile = aa_get_profile(__attach_match(name, list));
+	profile = aa_get_profile(__attach_match(bprm, name, list));
 	rcu_read_unlock();
 
 	return profile ? &profile->label : NULL;
@@ -411,6 +479,7 @@ struct aa_label *x_table_lookup(struct aa_profile *profile, u32 xindex,
 /**
  * x_to_label - get target label for a given xindex
  * @profile: current profile  (NOT NULL)
+ * @bprm: binprm structure of transitioning task
  * @name: name to lookup (NOT NULL)
  * @xindex: index into x transition table
  * @lookupname: returns: name used in lookup if one was specified (NOT NULL)
@@ -420,6 +489,7 @@ struct aa_label *x_table_lookup(struct aa_profile *profile, u32 xindex,
  * Returns: refcounted label or NULL if not found available
  */
 static struct aa_label *x_to_label(struct aa_profile *profile,
+				   const struct linux_binprm *bprm,
 				   const char *name, u32 xindex,
 				   const char **lookupname,
 				   const char **info)
@@ -447,11 +517,11 @@ static struct aa_label *x_to_label(struct aa_profile *profile,
 	case AA_X_NAME:
 		if (xindex & AA_X_CHILD)
 			/* released by caller */
-			new = find_attach(ns, &profile->base.profiles,
+			new = find_attach(bprm, ns, &profile->base.profiles,
 						name);
 		else
 			/* released by caller */
-			new = find_attach(ns, &ns->base.profiles,
+			new = find_attach(bprm, ns, &ns->base.profiles,
 						name);
 		*lookupname = name;
 		break;
@@ -491,6 +561,8 @@ static struct aa_label *profile_transition(struct aa_profile *profile,
 					   bool *secure_exec)
 {
 	struct aa_label *new = NULL;
+	struct aa_profile *component;
+	struct label_it i;
 	const char *info = NULL, *name = NULL, *target = NULL;
 	unsigned int state = profile->file.start;
 	struct aa_perms perms = {};
@@ -515,8 +587,8 @@ static struct aa_label *profile_transition(struct aa_profile *profile,
 	}
 
 	if (profile_unconfined(profile)) {
-		new = find_attach(profile->ns, &profile->ns->base.profiles,
-				  name);
+		new = find_attach(bprm, profile->ns,
+				  &profile->ns->base.profiles, name);
 		if (new) {
 			AA_DEBUG("unconfined attached to new label");
 			return new;
@@ -529,7 +601,8 @@ static struct aa_label *profile_transition(struct aa_profile *profile,
 	state = aa_str_perms(profile->file.dfa, state, name, cond, &perms);
 	if (perms.allow & MAY_EXEC) {
 		/* exec permission determine how to transition */
-		new = x_to_label(profile, name, perms.xindex, &target, &info);
+		new = x_to_label(profile, bprm, name, perms.xindex, &target,
+				 &info);
 		if (new && new->proxy == profile->label.proxy && info) {
 			/* hack ix fallback - improve how this is detected */
 			goto audit;
@@ -538,6 +611,21 @@ static struct aa_label *profile_transition(struct aa_profile *profile,
 			info = "profile transition not found";
 			/* remove MAY_EXEC to audit as failure */
 			perms.allow &= ~MAY_EXEC;
+		} else {
+			/*
+			 * verify that each component's xattr requirements are
+			 * met, and fail execution otherwise
+			 */
+			label_for_each(i, new, component) {
+				if (aa_xattrs_match(bprm, component) < 0) {
+					error = -EACCES;
+					info = "required xattrs not present";
+					perms.allow &= ~MAY_EXEC;
+					aa_put_label(new);
+					new = NULL;
+					goto audit;
+				}
+			}
 		}
 	} else if (COMPLAIN_MODE(profile)) {
 		/* no exec permission - learning mode */

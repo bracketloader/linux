@@ -151,6 +151,12 @@ struct aa_profile {
 	struct aa_file_rules file;
 	struct aa_caps caps;
 	struct aa_net net;
+
+	int xattr_count;
+	const char **xattrs;
+	size_t *xattr_lens;
+	char **xattr_values;
+
 	struct aa_rlimit rlimits;
 
 	struct aa_loaddata *rawdata;
