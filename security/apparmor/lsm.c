@@ -1184,6 +1184,13 @@ static struct security_hook_list apparmor_hooks[] __lsm_ro_after_init = {
 	LSM_HOOK_INIT(secid_to_secctx, apparmor_secid_to_secctx),
 	LSM_HOOK_INIT(secctx_to_secid, apparmor_secctx_to_secid),
 	LSM_HOOK_INIT(release_secctx, apparmor_release_secctx),
+
+#ifdef CONFIG_AUDIT
+	LSM_HOOK_INIT(audit_rule_init, aa_audit_rule_init),
+	LSM_HOOK_INIT(audit_rule_known, aa_audit_rule_known),
+	LSM_HOOK_INIT(audit_rule_match, aa_audit_rule_match),
+	LSM_HOOK_INIT(audit_rule_free, aa_audit_rule_free),
+#endif
 };
 
 /*
