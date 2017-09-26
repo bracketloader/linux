@@ -223,6 +223,7 @@ static int evm_protected_xattr(const char *req_xattr_name)
  * @xattr_name: requested xattr
  * @xattr_value: requested xattr value
  * @xattr_value_len: requested xattr value length
+ * @force: force verification even if no EVM symmetric key is loaded
  *
  * Calculate the HMAC for the given dentry and verify it against the stored
  * security.evm xattr. For performance, use the xattr value and length
@@ -236,9 +237,10 @@ static int evm_protected_xattr(const char *req_xattr_name)
 enum integrity_status evm_verifyxattr(struct dentry *dentry,
 				      const char *xattr_name,
 				      void *xattr_value, size_t xattr_value_len,
-				      struct integrity_iint_cache *iint)
+				      struct integrity_iint_cache *iint,
+				      bool force)
 {
-	if (!evm_initialized || !evm_protected_xattr(xattr_name))
+	if ((!evm_initialized || !evm_protected_xattr(xattr_name)) && !force)
 		return INTEGRITY_UNKNOWN;
 
 	if (!iint) {

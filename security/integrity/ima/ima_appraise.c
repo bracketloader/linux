@@ -217,6 +217,7 @@ int ima_appraise_measurement(enum ima_hooks func,
 	struct inode *inode = d_backing_inode(dentry);
 	enum integrity_status status = INTEGRITY_UNKNOWN;
 	int rc = xattr_len, hash_start = 0;
+	bool evm_force = false;
 
 	if (!(inode->i_opflags & IOP_XATTR))
 		return INTEGRITY_UNKNOWN;
@@ -236,7 +237,15 @@ int ima_appraise_measurement(enum ima_hooks func,
 		goto out;
 	}
 
-	status = evm_verifyxattr(dentry, XATTR_NAME_IMA, xattr_value, rc, iint);
+	/*
+	 * Check if policy specifies that we should perform EVM
+	 * validation even in the absence of an EVM symmetric key
+	 */
+	if (iint->flags & IMA_EVM_REQUIRED)
+		evm_force = true;
+
+	status = evm_verifyxattr(dentry, XATTR_NAME_IMA, xattr_value, rc, iint,
+				 evm_force);
 	if ((status != INTEGRITY_PASS) && (status != INTEGRITY_UNKNOWN)) {
 		if ((status == INTEGRITY_NOLABEL)
 		    || (status == INTEGRITY_NOXATTRS))
