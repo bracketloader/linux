@@ -128,9 +128,11 @@ static enum integrity_status evm_verify_hmac(struct dentry *dentry,
 {
 	struct evm_ima_xattr_data *xattr_data = NULL;
 	struct evm_hmac_ng_data *hmac_ng_data;
+	struct evm_ima_xattr_ng_data *digsig_ng_data;
 	struct evm_ima_xattr_data calc;
 	enum integrity_status evm_status = INTEGRITY_PASS;
 	int rc, xattr_len;
+	u64 flags;
 
 	if (iint && iint->evm_status == INTEGRITY_PASS)
 		return iint->evm_status;
@@ -208,6 +210,30 @@ static enum integrity_status evm_verify_hmac(struct dentry *dentry,
 				   sizeof(calc.digest));
 		if (rc)
 			rc = -EINVAL;
+		break;
+	case EVM_IMA_XATTR_DIGSIG_NG:
+		digsig_ng_data = (struct evm_ima_xattr_ng_data *)xattr_data;
+		flags = be64_to_cpu(digsig_ng_data->hdr.flags);
+
+		rc = evm_calc_hash(dentry, xattr_name, xattr_value,
+				   xattr_value_len, flags, calc.digest);
+		if (rc)
+			break;
+		rc = integrity_digsig_verify(INTEGRITY_KEYRING_EVM,
+				 (const char *)&digsig_ng_data->sig,
+				 xattr_len-sizeof(struct evm_ima_xattr_ng_hdr),
+				 calc.digest, sizeof(calc.digest));
+		if (!rc) {
+			/* Replace RSA with HMAC if not mounted readonly and
+			 * not immutable
+			 */
+			if (!IS_RDONLY(d_backing_inode(dentry)) &&
+			    !IS_IMMUTABLE(d_backing_inode(dentry)))
+				evm_update_evmxattr(dentry, xattr_name,
+						    xattr_value,
+						    xattr_value_len,
+						    evm_default_flags);
+		}
 		break;
 	default:
 		rc = -EINVAL;
