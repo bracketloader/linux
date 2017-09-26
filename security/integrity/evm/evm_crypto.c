@@ -138,7 +138,7 @@ out:
  * protection.)
  */
 static void hmac_add_misc(struct shash_desc *desc, struct inode *inode,
-			  char *digest)
+			  u64 flags, char *digest)
 {
 	struct h_misc {
 		unsigned long ino;
@@ -149,8 +149,10 @@ static void hmac_add_misc(struct shash_desc *desc, struct inode *inode,
 	} hmac_misc;
 
 	memset(&hmac_misc, 0, sizeof(hmac_misc));
-	hmac_misc.ino = inode->i_ino;
-	hmac_misc.generation = inode->i_generation;
+	if (flags & EVM_INODE) {
+		hmac_misc.ino = inode->i_ino;
+		hmac_misc.generation = inode->i_generation;
+	}
 	/* The hmac uid and gid must be encoded in the initial user
 	 * namespace (not the filesystems user namespace) as encoding
 	 * them in the filesystems user namespace allows an attack
@@ -159,11 +161,14 @@ static void hmac_add_misc(struct shash_desc *desc, struct inode *inode,
 	 * filesystem for real on next boot and trust it because
 	 * everything is signed.
 	 */
-	hmac_misc.uid = from_kuid(&init_user_ns, inode->i_uid);
-	hmac_misc.gid = from_kgid(&init_user_ns, inode->i_gid);
-	hmac_misc.mode = inode->i_mode;
+	if (flags & EVM_OWNERSHIP) {
+		hmac_misc.uid = from_kuid(&init_user_ns, inode->i_uid);
+		hmac_misc.gid = from_kgid(&init_user_ns, inode->i_gid);
+	}
+	if (flags & EVM_MODE)
+		hmac_misc.mode = inode->i_mode;
 	crypto_shash_update(desc, (const u8 *)&hmac_misc, sizeof(hmac_misc));
-	if (evm_hmac_attrs & EVM_ATTR_FSUUID)
+	if (flags & EVM_FSUUID)
 		crypto_shash_update(desc, &inode->i_sb->s_uuid.b[0],
 				    sizeof(inode->i_sb->s_uuid));
 	crypto_shash_final(desc, digest);
@@ -180,15 +185,16 @@ static int evm_calc_hmac_or_hash(struct dentry *dentry,
 				const char *req_xattr_name,
 				const char *req_xattr_value,
 				size_t req_xattr_value_len,
-				char type, char *digest)
+				char type, u64 flags, char *digest)
 {
 	struct inode *inode = d_backing_inode(dentry);
 	struct shash_desc *desc;
-	char **xattrname;
+	char *xattrname;
 	size_t xattr_size = 0;
 	char *xattr_value = NULL;
 	int error;
 	int size;
+	int i;
 
 	if (!(inode->i_opflags & IOP_XATTR))
 		return -EOPNOTSUPP;
@@ -198,15 +204,19 @@ static int evm_calc_hmac_or_hash(struct dentry *dentry,
 		return PTR_ERR(desc);
 
 	error = -ENODATA;
-	for (xattrname = evm_config_xattrnames; *xattrname != NULL; xattrname++) {
+	for (i = 0; evm_config_xattrnames[i] != NULL; i++) {
+		if (!(flags & (1 << i)))
+			continue;
+
+		xattrname = evm_config_xattrnames[i];
 		if ((req_xattr_name && req_xattr_value)
-		    && !strcmp(*xattrname, req_xattr_name)) {
+		    && !strcmp(xattrname, req_xattr_name)) {
 			error = 0;
 			crypto_shash_update(desc, (const u8 *)req_xattr_value,
 					     req_xattr_value_len);
 			continue;
 		}
-		size = vfs_getxattr_alloc(dentry, *xattrname,
+		size = vfs_getxattr_alloc(dentry, xattrname,
 					  &xattr_value, xattr_size, GFP_NOFS);
 		if (size == -ENOMEM) {
 			error = -ENOMEM;
@@ -219,7 +229,7 @@ static int evm_calc_hmac_or_hash(struct dentry *dentry,
 		xattr_size = size;
 		crypto_shash_update(desc, (const u8 *)xattr_value, xattr_size);
 	}
-	hmac_add_misc(desc, inode, digest);
+	hmac_add_misc(desc, inode, flags, digest);
 
 out:
 	kfree(xattr_value);
@@ -229,18 +239,18 @@ out:
 
 int evm_calc_hmac(struct dentry *dentry, const char *req_xattr_name,
 		  const char *req_xattr_value, size_t req_xattr_value_len,
-		  char *digest)
+		  u64 flags, char *digest)
 {
 	return evm_calc_hmac_or_hash(dentry, req_xattr_name, req_xattr_value,
-				req_xattr_value_len, EVM_XATTR_HMAC, digest);
+			   req_xattr_value_len, EVM_XATTR_HMAC, flags, digest);
 }
 
 int evm_calc_hash(struct dentry *dentry, const char *req_xattr_name,
 		  const char *req_xattr_value, size_t req_xattr_value_len,
-		  char *digest)
+		  u64 flags, char *digest)
 {
 	return evm_calc_hmac_or_hash(dentry, req_xattr_name, req_xattr_value,
-				req_xattr_value_len, IMA_XATTR_DIGEST, digest);
+			 req_xattr_value_len, IMA_XATTR_DIGEST, flags, digest);
 }
 
 /*
@@ -256,7 +266,7 @@ int evm_update_evmxattr(struct dentry *dentry, const char *xattr_name,
 	int rc = 0;
 
 	rc = evm_calc_hmac(dentry, xattr_name, xattr_value,
-			   xattr_value_len, xattr_data.digest);
+			xattr_value_len, evm_default_flags, xattr_data.digest);
 	if (rc == 0) {
 		xattr_data.type = EVM_XATTR_HMAC;
 		rc = __vfs_setxattr_noperm(dentry, XATTR_NAME_EVM,
@@ -280,7 +290,7 @@ int evm_init_hmac(struct inode *inode, const struct xattr *lsm_xattr,
 	}
 
 	crypto_shash_update(desc, lsm_xattr->value, lsm_xattr->value_len);
-	hmac_add_misc(desc, inode, hmac_val);
+	hmac_add_misc(desc, inode, evm_default_flags, hmac_val);
 	kfree(desc);
 	return 0;
 }

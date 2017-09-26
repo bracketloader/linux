@@ -35,23 +35,32 @@ static char *integrity_status_msg[] = {
 };
 char *evm_hmac = "hmac(sha1)";
 char *evm_hash = "sha1";
-int evm_hmac_attrs;
 
-char *evm_config_xattrnames[] = {
+u64 evm_default_flags =
 #ifdef CONFIG_SECURITY_SELINUX
-	XATTR_NAME_SELINUX,
+	EVM_SELINUX |
 #endif
 #ifdef CONFIG_SECURITY_SMACK
-	XATTR_NAME_SMACK,
+	EVM_SMACK |
 #ifdef CONFIG_EVM_EXTRA_SMACK_XATTRS
-	XATTR_NAME_SMACKEXEC,
-	XATTR_NAME_SMACKTRANSMUTE,
-	XATTR_NAME_SMACKMMAP,
+	EVM_SMACKEXEC |	EVM_SMACKTRANSMUTE | EVM_SMACKMMAP |
 #endif
 #endif
 #ifdef CONFIG_IMA_APPRAISE
-	XATTR_NAME_IMA,
+	EVM_IMA |
 #endif
+#ifdef CONFIG_EVM_ATTR_FSUUID
+	EVM_FSUUID |
+#endif
+	EVM_CAPS | EVM_INODE | EVM_OWNERSHIP | EVM_MODE;
+
+char *evm_config_xattrnames[] = {
+	XATTR_NAME_SELINUX,
+	XATTR_NAME_SMACK,
+	XATTR_NAME_SMACKEXEC,
+	XATTR_NAME_SMACKTRANSMUTE,
+	XATTR_NAME_SMACKMMAP,
+	XATTR_NAME_IMA,
 	XATTR_NAME_CAPS,
 	NULL
 };
@@ -67,24 +76,26 @@ __setup("evm=", evm_set_fixmode);
 
 static void __init evm_init_config(void)
 {
-#ifdef CONFIG_EVM_ATTR_FSUUID
-	evm_hmac_attrs |= EVM_ATTR_FSUUID;
-#endif
-	pr_info("HMAC attrs: 0x%x\n", evm_hmac_attrs);
+	pr_info("HMAC attrs: 0x%llx\n", evm_default_flags);
 }
 
 static int evm_find_protected_xattrs(struct dentry *dentry)
 {
 	struct inode *inode = d_backing_inode(dentry);
-	char **xattr;
+	char *xattr;
 	int error;
 	int count = 0;
+	int i;
 
 	if (!(inode->i_opflags & IOP_XATTR))
 		return -EOPNOTSUPP;
 
-	for (xattr = evm_config_xattrnames; *xattr != NULL; xattr++) {
-		error = __vfs_getxattr(dentry, inode, *xattr, NULL, 0);
+	for (i = 0; evm_config_xattrnames[i] != NULL; i++) {
+		if (!(evm_default_flags & (1 << i)))
+			continue;
+
+		xattr = evm_config_xattrnames[i];
+		error = __vfs_getxattr(dentry, inode, xattr, NULL, 0);
 		if (error < 0) {
 			if (error == -ENODATA)
 				continue;
@@ -152,7 +163,7 @@ static enum integrity_status evm_verify_hmac(struct dentry *dentry,
 			goto out;
 		}
 		rc = evm_calc_hmac(dentry, xattr_name, xattr_value,
-				   xattr_value_len, calc.digest);
+			      xattr_value_len, evm_default_flags, calc.digest);
 		if (rc)
 			break;
 		rc = crypto_memneq(xattr_data->digest, calc.digest,
@@ -162,7 +173,7 @@ static enum integrity_status evm_verify_hmac(struct dentry *dentry,
 		break;
 	case EVM_IMA_XATTR_DIGSIG:
 		rc = evm_calc_hash(dentry, xattr_name, xattr_value,
-				xattr_value_len, calc.digest);
+			      xattr_value_len, evm_default_flags, calc.digest);
 		if (rc)
 			break;
 		rc = integrity_digsig_verify(INTEGRITY_KEYRING_EVM,
