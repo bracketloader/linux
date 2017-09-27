@@ -188,7 +188,8 @@ static enum integrity_status evm_verify_hmac(struct dentry *dentry,
 			    !IS_IMMUTABLE(d_backing_inode(dentry)))
 				evm_update_evmxattr(dentry, xattr_name,
 						    xattr_value,
-						    xattr_value_len);
+						    xattr_value_len,
+						    evm_default_flags);
 		}
 		break;
 	case EVM_XATTR_HMAC_NG:
@@ -427,7 +428,8 @@ void evm_inode_post_setxattr(struct dentry *dentry, const char *xattr_name,
 
 	evm_reset_status(dentry->d_inode);
 
-	evm_update_evmxattr(dentry, xattr_name, xattr_value, xattr_value_len);
+	evm_update_evmxattr(dentry, xattr_name, xattr_value, xattr_value_len,
+			    evm_default_flags);
 }
 
 /**
@@ -447,7 +449,7 @@ void evm_inode_post_removexattr(struct dentry *dentry, const char *xattr_name)
 
 	evm_reset_status(dentry->d_inode);
 
-	evm_update_evmxattr(dentry, xattr_name, NULL, 0);
+	evm_update_evmxattr(dentry, xattr_name, NULL, 0, evm_default_flags);
 }
 
 /**
@@ -488,7 +490,7 @@ void evm_inode_post_setattr(struct dentry *dentry, int ia_valid)
 		return;
 
 	if (ia_valid & (ATTR_MODE | ATTR_UID | ATTR_GID))
-		evm_update_evmxattr(dentry, NULL, NULL, 0);
+		evm_update_evmxattr(dentry, NULL, NULL, 0, evm_default_flags);
 }
 
 /*

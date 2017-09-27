@@ -259,16 +259,18 @@ int evm_calc_hash(struct dentry *dentry, const char *req_xattr_name,
  * Expects to be called with i_mutex locked.
  */
 int evm_update_evmxattr(struct dentry *dentry, const char *xattr_name,
-			const char *xattr_value, size_t xattr_value_len)
+			const char *xattr_value, size_t xattr_value_len,
+			u64 flags)
 {
 	struct inode *inode = d_backing_inode(dentry);
-	struct evm_ima_xattr_data xattr_data;
+	struct evm_hmac_ng_data xattr_data;
 	int rc = 0;
 
 	rc = evm_calc_hmac(dentry, xattr_name, xattr_value,
-			xattr_value_len, evm_default_flags, xattr_data.digest);
+			   xattr_value_len, flags, xattr_data.digest);
 	if (rc == 0) {
-		xattr_data.type = EVM_XATTR_HMAC;
+		xattr_data.hdr.type = EVM_XATTR_HMAC_NG;
+		xattr_data.hdr.flags = cpu_to_be64(flags);
 		rc = __vfs_setxattr_noperm(dentry, XATTR_NAME_EVM,
 					   &xattr_data,
 					   sizeof(xattr_data), 0);

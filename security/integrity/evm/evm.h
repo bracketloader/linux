@@ -56,7 +56,7 @@ int evm_init_key(void);
 int evm_update_evmxattr(struct dentry *dentry,
 			const char *req_xattr_name,
 			const char *req_xattr_value,
-			size_t req_xattr_value_len);
+			size_t req_xattr_value_len, u64 flags);
 int evm_calc_hmac(struct dentry *dentry, const char *req_xattr_name,
 		  const char *req_xattr_value,
 		  size_t req_xattr_value_len, u64 flags, char *digest);
