@@ -63,12 +63,18 @@ enum evm_ima_xattr_type {
 	EVM_XATTR_HMAC,
 	EVM_IMA_XATTR_DIGSIG,
 	IMA_XATTR_DIGEST_NG,
+	EVM_XATTR_HMAC_NG,
 	IMA_XATTR_LAST
 };
 
 struct evm_ima_xattr_data {
 	u8 type;
 	u8 digest[SHA1_DIGEST_SIZE];
+} __packed;
+
+struct evm_ima_xattr_ng_hdr {
+	u8 type;
+	__be64 flags;
 } __packed;
 
 #define IMA_MAX_DIGEST_SIZE	64
@@ -100,6 +106,11 @@ struct signature_v2_hdr {
 	__be32 keyid;		/* IMA key identifier - not X509/PGP specific */
 	__be16 sig_size;	/* signature size */
 	uint8_t sig[0];		/* signature payload */
+} __packed;
+
+struct evm_hmac_ng_data {
+	struct evm_ima_xattr_ng_hdr hdr;
+	u8 digest[SHA1_DIGEST_SIZE];
 } __packed;
 
 /* integrity data associated with an inode */

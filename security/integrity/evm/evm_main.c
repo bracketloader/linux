@@ -127,6 +127,7 @@ static enum integrity_status evm_verify_hmac(struct dentry *dentry,
 					     struct integrity_iint_cache *iint)
 {
 	struct evm_ima_xattr_data *xattr_data = NULL;
+	struct evm_hmac_ng_data *hmac_ng_data;
 	struct evm_ima_xattr_data calc;
 	enum integrity_status evm_status = INTEGRITY_PASS;
 	int rc, xattr_len;
@@ -189,6 +190,23 @@ static enum integrity_status evm_verify_hmac(struct dentry *dentry,
 						    xattr_value,
 						    xattr_value_len);
 		}
+		break;
+	case EVM_XATTR_HMAC_NG:
+		hmac_ng_data = (struct evm_hmac_ng_data *)xattr_data;
+		flags = be64_to_cpu(digsig_ng_data->hdr.flags);
+
+		if (xattr_len != sizeof(struct evm_hmac_ng_data)) {
+			evm_status = INTEGRITY_FAIL;
+			goto out;
+		}
+		rc = evm_calc_hmac(dentry, xattr_name, xattr_value,
+				   xattr_value_len, flags, calc.digest);
+		if (rc)
+			break;
+		rc = crypto_memneq(hmac_ng_data->digest, calc.digest,
+				   sizeof(calc.digest));
+		if (rc)
+			rc = -EINVAL;
 		break;
 	default:
 		rc = -EINVAL;
