@@ -28,6 +28,14 @@ config ZORRO
 	  the CPU slot may fall in this category, so you have to say Y to let
 	  Linux use these.
 
+config AMIGA_DMAC
+       tristate "Amiga DMA controller support"
+       depends on AMIGA
+       help
+	 This enables support for the Amiga DMA controller used by A2091
+	 and CDTV devices. It will be automatically enabled if a
+	 driver that requires it is enabled.
+
 config AMIGA_PCMCIA
 	bool "Amiga 1200/600 PCMCIA support"
 	depends on AMIGA
