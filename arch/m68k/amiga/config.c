@@ -251,6 +251,8 @@ static void __init amiga_identify(void)
 		goto Generic;
 
 	case AMI_CDTV:
+		AMIGAHW_SET(CDTV_CD);
+		/* fall through */
 	case AMI_CD32:
 		AMIGAHW_SET(CD_ROM);
 		AMIGAHW_SET(A2000_CLK);             /* Is this correct? */

@@ -130,7 +130,6 @@ static const struct resource amiga_rtc_resource __initconst = {
 	.flags	= IORESOURCE_MEM,
 };
 
-
 static int __init amiga_init_devices(void)
 {
 	struct platform_device *pdev;

@@ -56,6 +56,7 @@ struct amiga_hw_present {
     AMIGAHW_DECLARE(A1200_IDE);		/* IDE (A1200 alike) */
     AMIGAHW_DECLARE(A4000_IDE);		/* IDE (A4000 alike) */
     AMIGAHW_DECLARE(CD_ROM);		/* CD ROM drive */
+    AMIGAHW_DECLARE(CDTV_CD);		/* CDTV CD ROM drive */
     /* other I/O hardware */
     AMIGAHW_DECLARE(AMI_KEYBOARD);	/* Amiga Keyboard */
     AMIGAHW_DECLARE(AMI_MOUSE);		/* Amiga Mouse */
