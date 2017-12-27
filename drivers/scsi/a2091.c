@@ -82,7 +82,7 @@ static struct scsi_host_template a2091_scsi_template = {
 	.use_clustering		= DISABLE_CLUSTERING
 };
 
-static int a2091_probe(struct zorro_dev *z, const struct zorro_device_id *ent)
+int a2091_probe(struct zorro_dev *z, const struct zorro_device_id *ent)
 {
 	struct Scsi_Host *instance;
 	int error;
@@ -142,8 +142,9 @@ fail_alloc:
 	release_mem_region(z->resource.start, 256);
 	return error;
 }
+EXPORT_SYMBOL_GPL(a2091_probe);
 
-static void a2091_remove(struct zorro_dev *z)
+void a2091_remove(struct zorro_dev *z)
 {
 	struct Scsi_Host *instance = zorro_get_drvdata(z);
 	struct a2091_hostdata *hdata = shost_priv(instance);
@@ -154,32 +155,7 @@ static void a2091_remove(struct zorro_dev *z)
 	scsi_host_put(instance);
 	release_mem_region(z->resource.start, 256);
 }
-
-static struct zorro_device_id a2091_zorro_tbl[] = {
-	{ ZORRO_PROD_CBM_A590_A2091_1 },
-	{ ZORRO_PROD_CBM_A590_A2091_2 },
-	{ 0 }
-};
-MODULE_DEVICE_TABLE(zorro, a2091_zorro_tbl);
-
-static struct zorro_driver a2091_driver = {
-	.name		= "a2091",
-	.id_table	= a2091_zorro_tbl,
-	.probe		= a2091_probe,
-	.remove		= a2091_remove,
-};
-
-static int __init a2091_init(void)
-{
-	return zorro_register_driver(&a2091_driver);
-}
-module_init(a2091_init);
-
-static void __exit a2091_exit(void)
-{
-	zorro_unregister_driver(&a2091_driver);
-}
-module_exit(a2091_exit);
+EXPORT_SYMBOL_GPL(a2091_remove);
 
 MODULE_DESCRIPTION("Commodore A2091/A590 SCSI");
 MODULE_LICENSE("GPL");

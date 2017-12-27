@@ -3,6 +3,7 @@
 #define DMAC_H
 
 #include <linux/mutex.h>
+#include <linux/zorro.h>
 
 /*
  * if the transfer address ANDed with this results in a non-zero
@@ -67,4 +68,6 @@ void dmac_dma_stop(struct dmac *dmac, int status, int dir_in,
 void dmac_free(struct dmac *dmac);
 struct dmac *dmac_init(struct dmac_regs *regs, unsigned short cntr);
 
+int a2091_probe(struct zorro_dev *z, const struct zorro_device_id *ent);
+void a2091_remove(struct zorro_dev *z);
 #endif /* DMAC_H */

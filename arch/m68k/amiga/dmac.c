@@ -159,5 +159,41 @@ struct dmac *dmac_init(struct dmac_regs *regs, unsigned short cntr)
 }
 EXPORT_SYMBOL_GPL(dmac_init);
 
+static struct zorro_device_id dmac_zorro_tbl[] = {
+	{ ZORRO_PROD_CBM_A590_A2091_1 },
+	{ ZORRO_PROD_CBM_A590_A2091_2 },
+	{ 0 }
+};
+MODULE_DEVICE_TABLE(zorro, dmac_zorro_tbl);
+
+static int dmac_probe(struct zorro_dev *z, const struct zorro_device_id *ent)
+{
+	return a2091_probe(z, ent);
+}
+
+static void dmac_remove(struct zorro_dev *z)
+{
+	a2091_remove(z);
+}
+
+static struct zorro_driver dmac_driver = {
+	.name		= "dmac",
+	.id_table	= dmac_zorro_tbl,
+	.probe		= dmac_probe,
+	.remove		= dmac_remove,
+};
+
+static int __init dmac_init(void)
+{
+	return zorro_register_driver(&dmac_driver);
+}
+module_init(dmac_init);
+
+static void __exit dmac_exit(void)
+{
+	zorro_unregister_driver(&dmac_driver);
+}
+module_exit(dmac_exit);
+
 MODULE_DESCRIPTION("Commodore Amiga DMA controller");
 MODULE_LICENSE("GPL");
