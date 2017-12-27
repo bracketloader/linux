@@ -34,6 +34,8 @@ struct dmac_regs {
 struct dmac {
 	struct dmac_regs *regs;
 	struct mutex mutex;
+	void *chip_ram;
+	int chip_ram_len;
 };
 
 #define DAWR_DMAC              (3)
