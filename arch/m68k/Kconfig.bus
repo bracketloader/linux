@@ -43,6 +43,10 @@ config AMIGA_PCMCIA
 	  Include support in the kernel for pcmcia on Amiga 1200 and Amiga
 	  600. If you intend to use pcmcia cards say Y; otherwise say N.
 
+config AMIGA_CDTV
+	tristate "Amiga CDTV support"
+	depends on AMIGA_DMAC
+
 config ISA
 	bool
 	depends on Q40 || AMIGA_PCMCIA

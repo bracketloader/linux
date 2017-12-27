@@ -168,12 +168,18 @@ MODULE_DEVICE_TABLE(zorro, dmac_zorro_tbl);
 
 static int dmac_probe(struct zorro_dev *z, const struct zorro_device_id *ent)
 {
-	return a2091_probe(z, ent);
+	if (AMIGAHW_PRESENT(CDTV_CD))
+		return cdtv_cd_probe(z, ent);
+	else
+		return a2091_probe(z, ent);
 }
 
 static void dmac_remove(struct zorro_dev *z)
 {
-	a2091_remove(z);
+	if (AMIGAHW_PRESENT(CDTV_CD))
+		cdtv_cd_remove(z);
+	else
+		a2091_remove(z);
 }
 
 static struct zorro_driver dmac_driver = {
@@ -183,11 +189,11 @@ static struct zorro_driver dmac_driver = {
 	.remove		= dmac_remove,
 };
 
-static int __init dmac_init(void)
+static int __init dmac_reg(void)
 {
 	return zorro_register_driver(&dmac_driver);
 }
-module_init(dmac_init);
+module_init(dmac_reg);
 
 static void __exit dmac_exit(void)
 {

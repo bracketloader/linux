@@ -3547,6 +3547,11 @@ S:	Maintained
 F:	Documentation/devicetree/bindings/media/coda.txt
 F:	drivers/media/platform/coda/
 
+COMMODORE CDTV CD-ROM DRIVER
+M:	Matthew Garrett <mjg59@google.com>
+S:	Maintained
+F:	arch/m68k/amiga/cdtv.c
+
 COMMON CLK FRAMEWORK
 M:	Michael Turquette <mturquette@baylibre.com>
 M:	Stephen Boyd <sboyd@codeaurora.org>

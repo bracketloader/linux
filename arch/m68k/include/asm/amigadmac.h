@@ -92,6 +92,25 @@ void dmac_dma_stop(struct dmac *dmac, int status, int dir_in,
 void dmac_free(struct dmac *dmac);
 struct dmac *dmac_init(struct dmac_regs *regs, unsigned short cntr);
 
+#if IS_ENABLED(CONFIG_A2091_SCSI)
 int a2091_probe(struct zorro_dev *z, const struct zorro_device_id *ent);
 void a2091_remove(struct zorro_dev *z);
+#else
+static inline int a2091_probe(struct zorro_dev *z,
+			      const struct zorro_device_id *ent) {
+	return -ENODEV;
+}
+static inline void a2091_remove(struct zorro_dev *z) { }
+#endif
+#if IS_ENABLED(CONFIG_AMIGA_CDTV)
+int cdtv_cd_probe(struct zorro_dev *z, const struct zorro_device_id *ent);
+void cdtv_cd_remove(struct zorro_dev *z);
+#else
+static inline int cdtv_cd_probe(struct zorro_dev *z,
+			      const struct zorro_device_id *ent) {
+	return -ENODEV;
+}
+static inline void cdtv_cd_remove(struct zorro_dev *z) { }
+#endif
+
 #endif /* DMAC_H */
