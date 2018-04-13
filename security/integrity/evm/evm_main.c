@@ -35,7 +35,7 @@ static const char * const integrity_status_msg[] = {
 };
 int evm_hmac_attrs;
 
-char *evm_config_xattrnames[] = {
+char *evm_config_default_xattrnames[] = {
 #ifdef CONFIG_SECURITY_SELINUX
 	XATTR_NAME_SELINUX,
 #endif
@@ -57,6 +57,8 @@ char *evm_config_xattrnames[] = {
 	NULL
 };
 
+__ro_after_init LIST_HEAD(evm_config_xattrnames);
+
 static int evm_fixmode;
 static int __init evm_set_fixmode(char *str)
 {
@@ -66,12 +68,30 @@ static int __init evm_set_fixmode(char *str)
 }
 __setup("evm=", evm_set_fixmode);
 
-static void __init evm_init_config(void)
+static int __init evm_init_config(void)
 {
+	struct xattr_list *tmp;
+	char **xattrname;
+
+	for (xattrname = evm_config_default_xattrnames; *xattrname != NULL;
+	     xattrname++) {
+		tmp = kmalloc(sizeof(struct xattr_list), GFP_KERNEL);
+		if (!tmp)
+			return -ENOMEM;
+		tmp->name = kstrdup(*xattrname, GFP_KERNEL);
+		if (!tmp->name) {
+			kfree(tmp);
+			return -ENOMEM;
+		}
+		list_add_tail(&tmp->list, &evm_config_xattrnames);
+	}
+
 #ifdef CONFIG_EVM_ATTR_FSUUID
 	evm_hmac_attrs |= EVM_ATTR_FSUUID;
 #endif
 	pr_info("HMAC attrs: 0x%x\n", evm_hmac_attrs);
+
+	return 0;
 }
 
 static bool evm_key_loaded(void)
@@ -82,15 +102,15 @@ static bool evm_key_loaded(void)
 static int evm_find_protected_xattrs(struct dentry *dentry)
 {
 	struct inode *inode = d_backing_inode(dentry);
-	char **xattr;
+	struct xattr_list *xattr;
 	int error;
 	int count = 0;
 
 	if (!(inode->i_opflags & IOP_XATTR))
 		return -EOPNOTSUPP;
 
-	for (xattr = evm_config_xattrnames; *xattr != NULL; xattr++) {
-		error = __vfs_getxattr(dentry, inode, *xattr, NULL, 0);
+	list_for_each_entry(xattr, &evm_config_xattrnames, list) {
+		error = __vfs_getxattr(dentry, inode, xattr->name, NULL, 0);
 		if (error < 0) {
 			if (error == -ENODATA)
 				continue;
@@ -211,24 +231,25 @@ out:
 
 static int evm_protected_xattr(const char *req_xattr_name)
 {
-	char **xattrname;
 	int namelen;
 	int found = 0;
+	struct xattr_list *xattr;
 
 	namelen = strlen(req_xattr_name);
-	for (xattrname = evm_config_xattrnames; *xattrname != NULL; xattrname++) {
-		if ((strlen(*xattrname) == namelen)
-		    && (strncmp(req_xattr_name, *xattrname, namelen) == 0)) {
+	list_for_each_entry(xattr, &evm_config_xattrnames, list) {
+		if ((strlen(xattr->name) == namelen)
+		    && (strncmp(req_xattr_name, xattr->name, namelen) == 0)) {
 			found = 1;
 			break;
 		}
 		if (strncmp(req_xattr_name,
-			    *xattrname + XATTR_SECURITY_PREFIX_LEN,
+			    xattr->name + XATTR_SECURITY_PREFIX_LEN,
 			    strlen(req_xattr_name)) == 0) {
 			found = 1;
 			break;
 		}
 	}
+
 	return found;
 }
 
@@ -544,20 +565,37 @@ void __init evm_load_x509(void)
 static int __init init_evm(void)
 {
 	int error;
+	struct list_head *pos, *q;
+	struct xattr_list *xattr;
 
-	evm_init_config();
+	error = evm_init_config();
+	if (error)
+		goto error;
 
 	error = integrity_init_keyring(INTEGRITY_KEYRING_EVM);
 	if (error)
-		return error;
+		goto error;
 
 	error = evm_init_secfs();
 	if (error < 0) {
 		pr_info("Error registering secfs\n");
-		return error;
+		goto error;
 	}
 
-	return 0;
+error:
+	if (error != 0) {
+		if (!list_empty(&evm_config_xattrnames)) {
+			list_for_each_safe(pos, q, &evm_config_xattrnames) {
+				xattr = list_entry(pos, struct xattr_list,
+						   list);
+				list_del(pos);
+				kfree(xattr->name);
+				kfree(xattr);
+			}
+		}
+	}
+
+	return error;
 }
 
 /*
@@ -565,10 +603,11 @@ static int __init init_evm(void)
  */
 static int __init evm_display_config(void)
 {
-	char **xattrname;
+	struct xattr_list *xattr;
 
-	for (xattrname = evm_config_xattrnames; *xattrname != NULL; xattrname++)
-		pr_info("%s\n", *xattrname);
+	list_for_each_entry(xattr, &evm_config_xattrnames, list)
+		pr_info("%s\n", xattr->name);
+
 	return 0;
 }
 

@@ -20,6 +20,7 @@
 #include "evm.h"
 
 static struct dentry *evm_init_tpm;
+static struct dentry *evm_xattrs;
 
 /**
  * evm_read_key - read() for <securityfs>/evm
@@ -107,13 +108,102 @@ static const struct file_operations evm_key_ops = {
 	.write		= evm_write_key,
 };
 
+/**
+ * evm_read_xattrs - read() for <securityfs>/evm_xattrs
+ *
+ * @filp: file pointer, not actually used
+ * @buf: where to put the result
+ * @count: maximum to send along
+ * @ppos: where to start
+ *
+ * Returns number of bytes read or error code, as appropriate
+ */
+static ssize_t evm_read_xattrs(struct file *filp, char __user *buf,
+			       size_t count, loff_t *ppos)
+{
+	char *temp;
+	int offset = 0;
+	ssize_t rc, size = 0;
+	struct xattr_list *xattr;
+
+	if (*ppos != 0)
+		return 0;
+
+	list_for_each_entry(xattr, &evm_config_xattrnames, list)
+		size += strlen(xattr->name) + 1;
+
+	temp = kmalloc(size + 1, GFP_KERNEL);
+	if (!temp)
+		return -ENOMEM;
+
+	list_for_each_entry(xattr, &evm_config_xattrnames, list) {
+		sprintf(temp + offset, "%s\n", xattr->name);
+		offset += strlen(xattr->name) + 1;
+	}
+
+	rc = simple_read_from_buffer(buf, count, ppos, temp, strlen(temp));
+
+	return rc;
+}
+
+/**
+ * evm_write_xattrs - write() for <securityfs>/evm_xattrs
+ * @file: file pointer, not actually used
+ * @buf: where to get the data from
+ * @count: bytes sent
+ * @ppos: where to start
+ *
+ * Returns number of bytes written or error code, as appropriate
+ */
+static ssize_t evm_write_xattrs(struct file *file, const char __user *buf,
+				size_t count, loff_t *ppos)
+{
+	int len;
+	struct xattr_list *xattr;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (*ppos != 0)
+		return -EINVAL;
+
+	xattr = kmalloc(sizeof(struct xattr_list), GFP_KERNEL);
+	if (!xattr)
+		return -ENOMEM;
+
+	xattr->name = memdup_user_nul(buf, count);
+	if (!xattr->name) {
+		kfree(xattr);
+		return -ENOMEM;
+	}
+
+	/* Remove any trailing newline */
+	len = strlen(xattr->name);
+	if (xattr->name[len-1] == '\n')
+		xattr->name[len-1] = '\0';
+
+	list_add_tail(&xattr->list, &evm_config_xattrnames);
+	return count;
+}
+
+static const struct file_operations evm_xattr_ops = {
+	.read		= evm_read_xattrs,
+	.write		= evm_write_xattrs,
+};
+
 int __init evm_init_secfs(void)
 {
-	int error = 0;
-
 	evm_init_tpm = securityfs_create_file("evm", S_IRUSR | S_IRGRP,
 					      NULL, NULL, &evm_key_ops);
 	if (!evm_init_tpm || IS_ERR(evm_init_tpm))
-		error = -EFAULT;
-	return error;
+		return -EFAULT;
+
+	evm_xattrs = securityfs_create_file("evm_xattrs", S_IRUSR | S_IRGRP,
+					    NULL, NULL, &evm_xattr_ops);
+	if (!evm_xattrs || IS_ERR(evm_xattrs)) {
+		securityfs_remove(evm_init_tpm);
+		return -EFAULT;
+	}
+
+	return 0;
 }

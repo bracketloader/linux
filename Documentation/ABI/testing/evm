@@ -57,3 +57,16 @@ Description:
 		dracut (via 97masterkey and 98integrity) and systemd (via
 		core/ima-setup) have support for loading keys at boot
 		time.
+
+What:		security/evm_xattrs
+Date:		April 2018
+Contact:	Matthew Garrett <mjg59@google.com>
+Description:
+		Shows the set of extended attributes used to calculate or
+		validate the EVM signature, and allows additional attributes
+		to be added at runtime. Adding additional extended attributes
+		will result in any existing signatures generated without the
+		additional attributes becoming invalid, and any signatures
+		generated after additional attributes are added will only be
+		valid if the same additional attributes are configured on
+		system boot.
