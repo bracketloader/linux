@@ -28,6 +28,8 @@
 #include <crypto/algapi.h>
 #include "evm.h"
 
+#define HMAC_LEN 20
+
 int evm_initialized;
 
 static const char * const integrity_status_msg[] = {
@@ -122,10 +124,11 @@ static enum integrity_status evm_verify_hmac(struct dentry *dentry,
 					     struct integrity_iint_cache *iint)
 {
 	struct evm_ima_xattr_data *xattr_data = NULL;
-	struct evm_ima_xattr_data calc;
+	struct signature_v2_hdr *hdr;
 	enum integrity_status evm_status = INTEGRITY_PASS;
 	struct inode *inode;
-	int rc, xattr_len;
+	int rc, xattr_len, digest_len;
+	char *digest = NULL;
 
 	if (iint && (iint->evm_status == INTEGRITY_PASS ||
 		     iint->evm_status == INTEGRITY_PASS_IMMUTABLE))
@@ -155,29 +158,35 @@ static enum integrity_status evm_verify_hmac(struct dentry *dentry,
 	/* check value type */
 	switch (xattr_data->type) {
 	case EVM_XATTR_HMAC:
+		digest = kmalloc(HMAC_LEN, GFP_KERNEL);
+		if (!digest) {
+			rc = -ENOMEM;
+			break;
+		}
 		if (xattr_len != sizeof(struct evm_ima_xattr_data)) {
 			evm_status = INTEGRITY_FAIL;
 			goto out;
 		}
 		rc = evm_calc_hmac(dentry, xattr_name, xattr_value,
-				   xattr_value_len, calc.digest);
+				   xattr_value_len, &digest);
 		if (rc)
 			break;
-		rc = crypto_memneq(xattr_data->digest, calc.digest,
-			    sizeof(calc.digest));
+		rc = crypto_memneq(xattr_data->digest, digest, HMAC_LEN);
 		if (rc)
 			rc = -EINVAL;
 		break;
 	case EVM_IMA_XATTR_DIGSIG:
 	case EVM_XATTR_PORTABLE_DIGSIG:
+		hdr = (struct signature_v2_hdr *)xattr_value;
+
 		rc = evm_calc_hash(dentry, xattr_name, xattr_value,
 				   xattr_value_len, xattr_data->type,
-				   calc.digest);
+				   hdr->hash_algo, &digest, &digest_len);
 		if (rc)
 			break;
 		rc = integrity_digsig_verify(INTEGRITY_KEYRING_EVM,
 					(const char *)xattr_data, xattr_len,
-					calc.digest, sizeof(calc.digest));
+					digest, digest_len);
 		if (!rc) {
 			inode = d_backing_inode(dentry);
 
@@ -203,6 +212,7 @@ static enum integrity_status evm_verify_hmac(struct dentry *dentry,
 		evm_status = (rc == -ENODATA) ?
 				INTEGRITY_NOXATTRS : INTEGRITY_FAIL;
 out:
+	kfree(digest);
 	if (iint)
 		iint->evm_status = evm_status;
 	kfree(xattr_data);

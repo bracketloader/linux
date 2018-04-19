@@ -21,6 +21,7 @@
 #include <linux/evm.h>
 #include <keys/encrypted-type.h>
 #include <crypto/hash.h>
+#include <crypto/hash_info.h>
 #include "evm.h"
 
 #define EVMKEY "evm-key"
@@ -74,10 +75,10 @@ busy:
 }
 EXPORT_SYMBOL_GPL(evm_set_key);
 
-static struct shash_desc *init_desc(char type)
+static struct shash_desc *init_desc(char type, uint8_t hash_algo)
 {
 	long rc;
-	char *algo;
+	const char *algo;
 	struct crypto_shash **tfm;
 	struct shash_desc *desc;
 
@@ -90,7 +91,7 @@ static struct shash_desc *init_desc(char type)
 		algo = evm_hmac;
 	} else {
 		tfm = &hash_tfm;
-		algo = evm_hash;
+		algo = hash_algo_name[hash_algo];
 	}
 
 	if (*tfm == NULL) {
@@ -189,7 +190,8 @@ static int evm_calc_hmac_or_hash(struct dentry *dentry,
 				const char *req_xattr_name,
 				const char *req_xattr_value,
 				size_t req_xattr_value_len,
-				char type, char *digest)
+				uint8_t type, uint8_t hash_algo,
+				char **digest, int *digestlen)
 {
 	struct inode *inode = d_backing_inode(dentry);
 	struct shash_desc *desc;
@@ -203,9 +205,23 @@ static int evm_calc_hmac_or_hash(struct dentry *dentry,
 	if (!(inode->i_opflags & IOP_XATTR))
 		return -EOPNOTSUPP;
 
-	desc = init_desc(type);
+	desc = init_desc(type, hash_algo);
 	if (IS_ERR(desc))
 		return PTR_ERR(desc);
+
+	/*
+	 * HMACs are always SHA1, but signatures may be of varying sizes, so
+	 * allocate a buffer for the non-HMAC case and return the size to
+	 * the caller
+	 */
+	if (type != EVM_XATTR_HMAC) {
+		*digestlen = crypto_shash_digestsize(desc->tfm);
+		*digest = kmalloc(*digestlen, GFP_KERNEL);
+		if (!*digest) {
+			error = -ENOMEM;
+			goto out;
+		}
+	}
 
 	error = -ENODATA;
 	for (xattrname = evm_config_xattrnames; *xattrname != NULL; xattrname++) {
@@ -238,7 +254,7 @@ static int evm_calc_hmac_or_hash(struct dentry *dentry,
 		if (is_ima)
 			ima_present = true;
 	}
-	hmac_add_misc(desc, inode, type, digest);
+	hmac_add_misc(desc, inode, type, *digest);
 
 	/* Portable EVM signatures must include an IMA hash */
 	if (type == EVM_XATTR_PORTABLE_DIGSIG && !ima_present)
@@ -251,18 +267,18 @@ out:
 
 int evm_calc_hmac(struct dentry *dentry, const char *req_xattr_name,
 		  const char *req_xattr_value, size_t req_xattr_value_len,
-		  char *digest)
+		  char **digest)
 {
 	return evm_calc_hmac_or_hash(dentry, req_xattr_name, req_xattr_value,
-			       req_xattr_value_len, EVM_XATTR_HMAC, digest);
+		    req_xattr_value_len, EVM_XATTR_HMAC, 0x02, digest, NULL);
 }
 
 int evm_calc_hash(struct dentry *dentry, const char *req_xattr_name,
 		  const char *req_xattr_value, size_t req_xattr_value_len,
-		  char type, char *digest)
+		  char type, uint8_t hash_algo, char **digest, int *digestlen)
 {
 	return evm_calc_hmac_or_hash(dentry, req_xattr_name, req_xattr_value,
-				     req_xattr_value_len, type, digest);
+		      req_xattr_value_len, type, hash_algo, digest, digestlen);
 }
 
 static int evm_is_immutable(struct dentry *dentry, struct inode *inode)
@@ -316,7 +332,7 @@ int evm_update_evmxattr(struct dentry *dentry, const char *xattr_name,
 		return -EPERM;
 
 	rc = evm_calc_hmac(dentry, xattr_name, xattr_value,
-			   xattr_value_len, xattr_data.digest);
+			   xattr_value_len, (char **)&xattr_data.digest);
 	if (rc == 0) {
 		xattr_data.type = EVM_XATTR_HMAC;
 		rc = __vfs_setxattr_noperm(dentry, XATTR_NAME_EVM,
@@ -333,7 +349,7 @@ int evm_init_hmac(struct inode *inode, const struct xattr *lsm_xattr,
 {
 	struct shash_desc *desc;
 
-	desc = init_desc(EVM_XATTR_HMAC);
+	desc = init_desc(EVM_XATTR_HMAC, 0x02);
 	if (IS_ERR(desc)) {
 		pr_info("init_desc failed\n");
 		return PTR_ERR(desc);
