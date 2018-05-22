@@ -135,7 +135,8 @@ int aa_alloc_secid(struct aa_label *label, gfp_t gfp)
 
 	idr_preload(gfp);
 	spin_lock_irqsave(&secid_lock, flags);
-	ret = idr_alloc(&aa_secids, label, AA_FIRST_SECID, 0, GFP_ATOMIC);
+	ret = idr_alloc(&aa_secids, label, AA_FIRST_SECID, AA_SECID_MAX,
+			GFP_ATOMIC);
 	spin_unlock_irqrestore(&secid_lock, flags);
 	idr_preload_end();
 
