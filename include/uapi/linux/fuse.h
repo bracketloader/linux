@@ -381,6 +381,7 @@ enum fuse_opcode {
 	FUSE_READDIRPLUS   = 44,
 	FUSE_RENAME2       = 45,
 	FUSE_LSEEK         = 46,
+	FUSE_GETHASH       = 47,
 
 	/* CUSE specific operations */
 	CUSE_INIT          = 4096,
@@ -790,6 +791,11 @@ struct fuse_lseek_in {
 
 struct fuse_lseek_out {
 	uint64_t	offset;
+};
+
+struct fuse_gethash_in {
+	uint32_t	size;
+	uint32_t	hash;
 };
 
 #endif /* _LINUX_FUSE_H */

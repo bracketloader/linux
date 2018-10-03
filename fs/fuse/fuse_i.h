@@ -637,6 +637,13 @@ struct fuse_conn {
 	/** Allow other than the mounter user to access the filesystem ? */
 	unsigned allow_other:1;
 
+	/*
+	 * Allow the underlying filesystem to the hash of a file. This is
+	 * used by IMA to avoid needing to calculate the hash on every
+	 * measurement
+	 */
+	unsigned allow_gethash:1;
+
 	/** The number of requests waiting for completion */
 	atomic_t num_waiting;
 
