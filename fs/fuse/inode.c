@@ -70,6 +70,7 @@ struct fuse_mount_data {
 	unsigned group_id_present:1;
 	unsigned default_permissions:1;
 	unsigned allow_other:1;
+	unsigned allow_gethash:1;
 	unsigned max_read;
 	unsigned blksize;
 };
@@ -453,6 +454,7 @@ enum {
 	OPT_ALLOW_OTHER,
 	OPT_MAX_READ,
 	OPT_BLKSIZE,
+	OPT_ALLOW_GETHASH,
 	OPT_ERR
 };
 
@@ -465,6 +467,7 @@ static const match_table_t tokens = {
 	{OPT_ALLOW_OTHER,		"allow_other"},
 	{OPT_MAX_READ,			"max_read=%u"},
 	{OPT_BLKSIZE,			"blksize=%u"},
+	{OPT_ALLOW_GETHASH,		"allow_gethash"},
 	{OPT_ERR,			NULL}
 };
 
@@ -551,6 +554,15 @@ static int parse_fuse_opt(char *opt, struct fuse_mount_data *d, int is_bdev,
 			d->blksize = value;
 			break;
 
+		case OPT_ALLOW_GETHASH:
+			/*
+			 * This is relevant to security decisions made in
+			 * the root namespace, so restrict it more strongly
+			 */
+			if (capable(CAP_SYS_ADMIN))
+				d->allow_gethash = 1;
+			break;
+
 		default:
 			return 0;
 		}
@@ -574,6 +586,8 @@ static int fuse_show_options(struct seq_file *m, struct dentry *root)
 		seq_puts(m, ",default_permissions");
 	if (fc->allow_other)
 		seq_puts(m, ",allow_other");
+	if (fc->allow_gethash)
+		seq_puts(m, ",allow_gethash");
 	if (fc->max_read != ~0)
 		seq_printf(m, ",max_read=%u", fc->max_read);
 	if (sb->s_bdev && sb->s_blocksize != FUSE_DEFAULT_BLKSIZE)
@@ -1163,6 +1177,7 @@ static int fuse_fill_super(struct super_block *sb, void *data, int silent)
 	fc->user_id = d.user_id;
 	fc->group_id = d.group_id;
 	fc->max_read = max_t(unsigned, 4096, d.max_read);
+	fc->allow_gethash = d.allow_gethash;
 
 	/* Used by get_root_inode() */
 	sb->s_fs_info = fc;

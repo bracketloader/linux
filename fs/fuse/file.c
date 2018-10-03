@@ -3100,6 +3100,38 @@ out:
 	inode_unlock(inode_out);
 
 	return err;
+};
+
+static int fuse_file_get_hash(struct file *file, enum hash_algo hash,
+			      uint8_t *buf, size_t size)
+{
+	struct fuse_file *ff = file->private_data;
+	struct fuse_conn *fc = ff->fc;
+	FUSE_ARGS(args);
+	struct fuse_gethash_in inarg;
+	int err = 0;
+
+	if (!fc->allow_gethash)
+		return -EOPNOTSUPP;
+
+	memset(&inarg, 0, sizeof(inarg));
+	inarg.size = size;
+	inarg.hash = hash;
+	args.in.h.opcode = FUSE_GETHASH;
+	args.in.h.nodeid = ff->nodeid;
+	args.in.numargs = 1;
+	args.in.args[0].size = sizeof(inarg);
+	args.in.args[0].value = &inarg;
+	args.out.numargs = 1;
+	args.out.args[0].size = size;
+	args.out.args[0].value = buf;
+
+	err = fuse_simple_request(fc, &args);
+
+	if (err == -ENOSYS)
+		err = -EOPNOTSUPP;
+
+	return err;
 }
 
 static const struct file_operations fuse_file_operations = {
@@ -3119,6 +3151,7 @@ static const struct file_operations fuse_file_operations = {
 	.poll		= fuse_file_poll,
 	.fallocate	= fuse_file_fallocate,
 	.copy_file_range = fuse_copy_file_range,
+	.get_hash	= fuse_file_get_hash,
 };
 
 static const struct file_operations fuse_direct_io_file_operations = {
@@ -3136,6 +3169,7 @@ static const struct file_operations fuse_direct_io_file_operations = {
 	.compat_ioctl	= fuse_file_compat_ioctl,
 	.poll		= fuse_file_poll,
 	.fallocate	= fuse_file_fallocate,
+	.get_hash	= fuse_file_get_hash,
 	/* no splice_read */
 };
 

@@ -394,6 +394,7 @@ enum fuse_opcode {
 	FUSE_RENAME2		= 45,
 	FUSE_LSEEK		= 46,
 	FUSE_COPY_FILE_RANGE	= 47,
+	FUSE_GETHASH		= 48,
 
 	/* CUSE specific operations */
 	CUSE_INIT		= 4096,
@@ -815,6 +816,11 @@ struct fuse_copy_file_range_in {
 	uint64_t	off_out;
 	uint64_t	len;
 	uint64_t	flags;
+};
+
+struct fuse_gethash_in {
+	uint32_t	size;
+	uint32_t	hash;
 };
 
 #endif /* _LINUX_FUSE_H */
