@@ -1612,6 +1612,11 @@
 			different crypto accelerators. This option can be used
 			to achieve best performance for particular HW.
 
+	ima.force_hash= [IMA] Force hash calculation in IMA
+			Format: <bool>
+			Always calculate hashes rather than trusting the
+			filesystem to provide them to us.
+
 	init=		[KNL]
 			Format: <full_path>
 			Run specified binary instead of /sbin/init as init

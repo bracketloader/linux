@@ -32,6 +32,10 @@ static unsigned long ima_ahash_minsize;
 module_param_named(ahash_minsize, ima_ahash_minsize, ulong, 0644);
 MODULE_PARM_DESC(ahash_minsize, "Minimum file size for ahash use");
 
+static bool ima_force_hash = false;
+module_param_named(force_hash, ima_force_hash, bool_enable_only, 0644);
+MODULE_PARM_DESC(force_hash, "Always calculate hashes");
+
 /* default is 0 - 1 page. */
 static int ima_maxorder;
 static unsigned int ima_bufsize = PAGE_SIZE;
@@ -429,6 +433,13 @@ int ima_calc_file_hash(struct file *file, struct ima_digest_data *hash)
 		hash->length = hash_digest_size[ima_hash_algo];
 		hash->algo = ima_hash_algo;
 		return -EINVAL;
+	}
+
+	if (!ima_force_hash) {
+		hash->length = hash_digest_size[hash->algo];
+		rc = vfs_get_hash(file, hash->algo, hash->digest, hash->length);
+		if (!rc)
+			return 0;
 	}
 
 	i_size = i_size_read(file_inode(file));
