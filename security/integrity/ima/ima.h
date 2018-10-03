@@ -133,7 +133,8 @@ int ima_fs_init(void);
 int ima_add_template_entry(struct ima_template_entry *entry, int violation,
 			   const char *op, struct inode *inode,
 			   const unsigned char *filename);
-int ima_calc_file_hash(struct file *file, struct ima_digest_data *hash);
+int ima_calc_file_hash(struct file *file, struct ima_digest_data *hash,
+		       bool trust_vfs);
 int ima_calc_buffer_hash(const void *buf, loff_t len,
 			 struct ima_digest_data *hash);
 int ima_calc_field_array_hash(struct ima_field_data *field_data,

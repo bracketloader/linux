@@ -24,7 +24,8 @@ Description:
 				[euid=] [fowner=] [fsname=] [subtype=]]
 			lsm:	[[subj_user=] [subj_role=] [subj_type=]
 				 [obj_user=] [obj_role=] [obj_type=]]
-			option:	[[appraise_type=]] [permit_directio]
+			option:	[[appraise_type=] [permit_directio]
+			         [trust_vfs]]
 
 		base: 	func:= [BPRM_CHECK][MMAP_CHECK][CREDS_CHECK][FILE_CHECK][MODULE_CHECK]
 				[FIRMWARE_CHECK]
@@ -41,6 +42,8 @@ Description:
 		lsm:  	are LSM specific
 		option:	appraise_type:= [imasig]
 			pcr:= decimal value
+			permit_directio:= allow directio accesses
+			trust_vfs:= trust VFS-provided hash values
 
 		default policy:
 			# PROC_SUPER_MAGIC

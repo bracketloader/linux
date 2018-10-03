@@ -206,6 +206,7 @@ int ima_collect_measurement(struct integrity_iint_cache *iint,
 	int length;
 	void *tmpbuf;
 	u64 i_version;
+	bool trust_vfs;
 	struct {
 		struct ima_digest_data hdr;
 		char digest[IMA_MAX_DIGEST_SIZE];
@@ -225,10 +226,12 @@ int ima_collect_measurement(struct integrity_iint_cache *iint,
 	/* Initialize hash digest to 0's in case of failure */
 	memset(&hash.digest, 0, sizeof(hash.digest));
 
+	trust_vfs = iint->flags & IMA_TRUST_VFS;
+
 	if (buf)
 		result = ima_calc_buffer_hash(buf, size, &hash.hdr);
 	else
-		result = ima_calc_file_hash(file, &hash.hdr);
+		result = ima_calc_file_hash(file, &hash.hdr, trust_vfs);
 
 	if (result && result != -EBADF && result != -EINVAL)
 		goto out;

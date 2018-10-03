@@ -32,6 +32,10 @@ static unsigned long ima_ahash_minsize;
 module_param_named(ahash_minsize, ima_ahash_minsize, ulong, 0644);
 MODULE_PARM_DESC(ahash_minsize, "Minimum file size for ahash use");
 
+static bool ima_force_hash;
+module_param_named(force_hash, ima_force_hash, bool_enable_only, 0644);
+MODULE_PARM_DESC(force_hash, "Always calculate hashes");
+
 /* default is 0 - 1 page. */
 static int ima_maxorder;
 static unsigned int ima_bufsize = PAGE_SIZE;
@@ -402,11 +406,14 @@ static int ima_calc_file_shash(struct file *file, struct ima_digest_data *hash)
  * shash for the hash calculation.  If ahash fails, it falls back to using
  * shash.
  */
-int ima_calc_file_hash(struct file *file, struct ima_digest_data *hash)
+int ima_calc_file_hash(struct file *file, struct ima_digest_data *hash,
+		       bool trust_vfs)
 {
 	loff_t i_size;
 	int rc;
 	struct file *f = file;
+	struct dentry *dentry = file_dentry(file);
+	struct inode *inode = d_backing_inode(dentry);
 	bool new_file_instance = false, modified_flags = false;
 
 	/*
@@ -417,6 +424,20 @@ int ima_calc_file_hash(struct file *file, struct ima_digest_data *hash)
 		hash->length = hash_digest_size[ima_hash_algo];
 		hash->algo = ima_hash_algo;
 		return -EINVAL;
+	}
+
+	/*
+	 * If policy says we should trust VFS-provided hashes, and
+	 * we're not configured to force hashing, and if the
+	 * filesystem is trusted, ask the VFS if it can obtain the
+	 * hash without us having to calculate it ourself.
+	 */
+	if (trust_vfs && !ima_force_hash &&
+	    !(inode->i_sb->s_iflags & SB_I_UNTRUSTED_MOUNTER)) {
+		hash->length = hash_digest_size[hash->algo];
+		rc = vfs_get_hash(file, hash->algo, hash->digest, hash->length);
+		if (!rc)
+			return 0;
 	}
 
 	/* Open a new file instance in O_RDONLY if we cannot read */
