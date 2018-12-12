@@ -136,11 +136,21 @@ struct tcg_algorithm_info {
 	struct tcg_algorithm_size digest_sizes[];
 };
 
+/*
+ * This can be called in two contexts - when the event is already mapped,
+ * and when it isn't. In the latter case we don't know how much space we
+ * need to map in advance so need to jump through this repeated map/unmap
+ * dance as we learn more about the size of the event.
+ */
 static inline int _calc_tpm2_event_size(struct tcg_pcr_event2_hdr *event,
-					struct tcg_pcr_event *event_header)
+					struct tcg_pcr_event *event_header,
+				 void *(*map)(resource_size_t, unsigned long),
+					void(*unmap)(void *, unsigned long))
 {
 	struct tcg_efi_specid_event *efispecid;
 	struct tcg_event_field *event_field;
+	void *mapping = NULL;
+	int mapping_size;
 	void *marker;
 	void *marker_start;
 	u32 halg_size;
@@ -154,36 +164,94 @@ static inline int _calc_tpm2_event_size(struct tcg_pcr_event2_hdr *event,
 	marker = marker + sizeof(event->pcr_idx) + sizeof(event->event_type)
 		+ sizeof(event->count);
 
+	/* Map the event header */
+	if (map) {
+		mapping_size = marker - marker_start;
+		mapping = map((unsigned long)marker_start, mapping_size);
+		if (!mapping) {
+			size = 0;
+			goto out;
+		}
+	}
+
 	efispecid = (struct tcg_efi_specid_event *)event_header->event;
 
 	/* Check if event is malformed. */
-	if (event->count > efispecid->num_algs)
-		return 0;
+	if (event->count > efispecid->num_algs) {
+		size = 0;
+		goto out;
+	}
 
 	for (i = 0; i < event->count; i++) {
 		halg_size = sizeof(event->digests[i].alg_id);
-		memcpy(&halg, marker, halg_size);
 		marker = marker + halg_size;
+
+		/* Map the digest's algorithm identifier */
+		if (map && unmap) {
+			unmap(mapping, mapping_size);
+			mapping_size = marker - marker_start;
+			mapping = map((unsigned long)marker_start,
+				      mapping_size);
+			if (!mapping) {
+				size = 0;
+				goto out;
+			}
+		}
+
+		memcpy(&halg, marker, halg_size);
+
 		for (j = 0; j < efispecid->num_algs; j++) {
 			if (halg == efispecid->digest_sizes[j].alg_id) {
 				marker +=
 					efispecid->digest_sizes[j].digest_size;
+
+				/* Map the digest content itself */
+				if (map && unmap) {
+					unmap(mapping, mapping_size);
+					mapping_size = marker - marker_start;
+					mapping = map((unsigned long)marker_start,
+						      mapping_size);
+					if (!mapping) {
+						size = 0;
+						goto out;
+					}
+				}
 				break;
 			}
 		}
 		/* Algorithm without known length. Such event is unparseable. */
-		if (j == efispecid->num_algs)
-			return 0;
+		if (j == efispecid->num_algs) {
+			size = 0;
+			goto out;
+		}
 	}
 
 	event_field = (struct tcg_event_field *)marker;
+
+	/*
+	 * Map the event size - we don't read from the event itself, so
+	 * we don't need to map it
+	 */
+	if (map && unmap) {
+		unmap(marker_start, mapping_size);
+		mapping_size += sizeof(event_field->event_size);
+		mapping = map((unsigned long)marker_start, mapping_size);
+		if (!mapping) {
+			size = 0;
+			goto out;
+		}
+	}
+
 	marker = marker + sizeof(event_field->event_size)
 		+ event_field->event_size;
 	size = marker - marker_start;
 
 	if ((event->event_type == 0) && (event_field->event_size == 0))
-		return 0;
-
+		size = 0;
+out:
+	if (unmap)
+		unmap(mapping, mapping_size);
 	return size;
 }
+
 #endif
