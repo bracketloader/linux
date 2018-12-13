@@ -234,7 +234,7 @@ struct tpm2_null_auth_area {
  * Return: Same as with tpm_transmit_cmd.
  */
 int tpm2_pcr_extend(struct tpm_chip *chip, int pcr_idx, u32 count,
-		    struct tpm2_digest *digests)
+		    struct tpm2_digest_hdr *digests)
 {
 	struct tpm_buf buf;
 	struct tpm2_null_auth_area auth_area;
@@ -1030,6 +1030,19 @@ int tpm2_find_cc(struct tpm_chip *chip, u32 cc)
 	for (i = 0; i < chip->nr_commands; i++)
 		if (cc == (chip->cc_attrs_tbl[i] & GENMASK(15, 0)))
 			return i;
+
+	return -1;
+}
+
+int tpm2_digest_size(int algo_id)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(tpm2_hash_map); i++) {
+		if (algo_id != tpm2_hash_map[i].tpm_id)
+			continue;
+		return hash_digest_size[tpm2_hash_map[i].crypto_id];
+	}
 
 	return -1;
 }

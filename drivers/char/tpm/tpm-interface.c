@@ -1040,21 +1040,32 @@ static int tpm1_pcr_extend(struct tpm_chip *chip, int pcr_idx, const u8 *hash,
 int tpm_pcr_extend(struct tpm_chip *chip, int pcr_idx, const u8 *hash)
 {
 	int rc;
-	struct tpm2_digest digest_list[ARRAY_SIZE(chip->active_banks)];
 	u32 count = 0;
-	int i;
+	int i, size = 0;
+	void *digest_list = NULL;
 
 	chip = tpm_find_get_ops(chip);
 	if (!chip)
 		return -ENODEV;
 
 	if (chip->flags & TPM_CHIP_FLAG_TPM2) {
-		memset(digest_list, 0, sizeof(digest_list));
+		for (i = 0; i < ARRAY_SIZE(chip->active_banks); i++) {
+			int digest_size;
+			struct tpm2_digest_hdr *digest;
 
-		for (i = 0; i < ARRAY_SIZE(chip->active_banks) &&
-			    chip->active_banks[i] != TPM2_ALG_ERROR; i++) {
-			digest_list[i].alg_id = chip->active_banks[i];
-			memcpy(digest_list[i].digest, hash, TPM_DIGEST_SIZE);
+			if (chip->active_banks[i] == TPM2_ALG_ERROR)
+				continue;
+
+			digest_size = tpm2_digest_size(chip->active_banks[i]);
+			if (digest_size < 0)
+				continue;
+
+			digest = (struct tpm2_digest_hdr *)(digest_list + size);
+			size += sizeof(struct tpm2_digest_hdr) + digest_size;
+
+			digest_list = krealloc(digest_list, size, GFP_KERNEL);
+			digest->alg_id = chip->active_banks[i];
+			memcpy(digest->digest, hash, digest_size);
 			count++;
 		}
 

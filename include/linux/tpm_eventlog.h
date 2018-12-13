@@ -108,20 +108,35 @@ struct tcg_event_field {
 	u8 event[0];
 } __packed;
 
-struct tpm2_digest {
+struct tpm2_digest_hdr {
 	u16 alg_id;
-	u8 digest[SHA512_DIGEST_SIZE];
+	u8 digest[0];
 } __packed;
 
-struct tcg_pcr_event2 {
+struct tcg_pcr_event2_hdr {
 	u32 pcr_idx;
 	u32 event_type;
 	u32 count;
-	struct tpm2_digest digests[TPM2_ACTIVE_PCR_BANKS];
-	struct tcg_event_field event;
+	struct tpm2_digest_hdr digests[0];
 } __packed;
 
-static inline int _calc_tpm2_event_size(struct tcg_pcr_event2 *event,
+struct tcg_algorithm_size {
+	u16 algorithm_id;
+	u16 algorithm_size;
+};
+
+struct tcg_algorithm_info {
+	u8 signature[16];
+	u32 platform_class;
+	u8 spec_version_minor;
+	u8 spec_version_major;
+	u8 spec_errata;
+	u8 uintn_size;
+	u32 number_of_algorithms;
+	struct tcg_algorithm_size digest_sizes[];
+};
+
+static inline int _calc_tpm2_event_size(struct tcg_pcr_event2_hdr *event,
 					struct tcg_pcr_event *event_header)
 {
 	struct tcg_efi_specid_event *efispecid;
