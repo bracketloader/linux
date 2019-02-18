@@ -137,7 +137,12 @@ BPF_CALL_3(bpf_probe_read, void *, dst, u32, size, const void *, unsafe_ptr)
 {
 	int ret;
 
+	ret = security_locked_down(LOCKDOWN_BPF_READ);
+	if (ret)
+		goto out;
+
 	ret = probe_kernel_read(dst, unsafe_ptr, size);
+out:
 	if (unlikely(ret < 0))
 		memset(dst, 0, size);
 
@@ -156,6 +161,12 @@ static const struct bpf_func_proto bpf_probe_read_proto = {
 BPF_CALL_3(bpf_probe_write_user, void *, unsafe_ptr, const void *, src,
 	   u32, size)
 {
+	int ret;
+
+	ret = security_locked_down(LOCKDOWN_BPF_READ);
+	if (ret)
+		return ret;
+
 	/*
 	 * Ensure we're in user context which is safe for the helper to
 	 * run. This helper has no business in a kthread.
@@ -205,7 +216,11 @@ BPF_CALL_5(bpf_trace_printk, char *, fmt, u32, fmt_size, u64, arg1,
 	int fmt_cnt = 0;
 	u64 unsafe_addr;
 	char buf[64];
-	int i;
+	int i, ret;
+
+	ret = security_locked_down(LOCKDOWN_BPF_READ);
+	if (ret)
+		return ret;
 
 	/*
 	 * bpf_check()->check_func_arg()->check_stack_boundary()
@@ -534,6 +549,10 @@ BPF_CALL_3(bpf_probe_read_str, void *, dst, u32, size,
 {
 	int ret;
 
+	ret = security_locked_down(LOCKDOWN_BPF_READ);
+	if (ret)
+		goto out;
+
 	/*
 	 * The strncpy_from_unsafe() call will likely not fill the entire
 	 * buffer, but that's okay in this circumstance as we're probing
@@ -544,6 +563,7 @@ BPF_CALL_3(bpf_probe_read_str, void *, dst, u32, size,
 	 * is returned that can be used for bpf_perf_event_output() et al.
 	 */
 	ret = strncpy_from_unsafe(dst, unsafe_ptr, size);
+out:
 	if (unlikely(ret < 0))
 		memset(dst, 0, size);
 
