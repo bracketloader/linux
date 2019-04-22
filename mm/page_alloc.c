@@ -1083,10 +1083,16 @@ static __always_inline bool free_pages_prepare(struct page *page,
 					unsigned int order, bool check_free)
 {
 	int bad = 0;
+	int i;
 
 	VM_BUG_ON_PAGE(PageTail(page), page);
 
 	trace_mm_page_free(page, order);
+
+	if (PageWipeOnRelease(page)) {
+		for (i = 0; i < (1<<order); i++)
+			clear_highpage(page + i);
+	}
 
 	/*
 	 * Check tail pages before head page information is cleared to

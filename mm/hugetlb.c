@@ -1683,6 +1683,8 @@ struct page *alloc_huge_page_vma(struct hstate *h, struct vm_area_struct *vma,
 	node = huge_node(vma, address, gfp_mask, &mpol, &nodemask);
 	page = alloc_huge_page_nodemask(h, node, nodemask);
 	mpol_cond_put(mpol);
+	if (vma->vm_flags & VM_WIPEONRELEASE)
+		SetPageWipeOnRelease(page);
 
 	return page;
 }

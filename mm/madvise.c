@@ -48,6 +48,23 @@ static int madvise_need_mmap_write(int behavior)
 	}
 }
 
+static int madvise_wipe_on_release(unsigned long start, unsigned long end)
+{
+	struct page *page;
+
+	for (; start < end; start += PAGE_SIZE) {
+		int ret;
+
+		ret = get_user_pages(start, 1, 0, &page, NULL);
+		if (ret != 1)
+			return ret;
+		SetPageWipeOnRelease(page);
+		put_page(page);
+	}
+
+	return 0;
+}
+
 /*
  * We can potentially split a vm area into separate
  * areas, each area with its own behavior.
@@ -91,6 +108,23 @@ static long madvise_behavior(struct vm_area_struct *vma,
 		break;
 	case MADV_KEEPONFORK:
 		new_flags &= ~VM_WIPEONFORK;
+		break;
+	case MADV_WIPEONRELEASE:
+		/* MADV_WIPEONRELEASE is only supported on anonymous memory. */
+		if (VM_WIPEONRELEASE == 0 || vma->vm_file ||
+		    vma->vm_flags & VM_SHARED) {
+			error = -EINVAL;
+			goto out;
+		}
+		madvise_wipe_on_release(start, end);
+		new_flags |= VM_WIPEONRELEASE;
+		break;
+	case MADV_DONTWIPEONRELEASE:
+		if (VM_WIPEONRELEASE == 0) {
+			error = -EINVAL;
+			goto out;
+		}
+		new_flags &= ~VM_WIPEONRELEASE;
 		break;
 	case MADV_DONTDUMP:
 		new_flags |= VM_DONTDUMP;
@@ -727,6 +761,8 @@ madvise_behavior_valid(int behavior)
 	case MADV_DODUMP:
 	case MADV_WIPEONFORK:
 	case MADV_KEEPONFORK:
+	case MADV_WIPEONRELEASE:
+	case MADV_DONTWIPEONRELEASE:
 #ifdef CONFIG_MEMORY_FAILURE
 	case MADV_SOFT_OFFLINE:
 	case MADV_HWPOISON:
@@ -785,6 +821,9 @@ madvise_behavior_valid(int behavior)
  *  MADV_DONTDUMP - the application wants to prevent pages in the given range
  *		from being included in its core dump.
  *  MADV_DODUMP - cancel MADV_DONTDUMP: no longer exclude from core dump.
+ *  MADV_WIPEONRELEASE - clear the contents of the memory after the last
+ *		reference to it has been released
+ *  MADV_DONTWIPEONRELEASE - cancel MADV_WIPEONRELEASE
  *
  * return values:
  *  zero    - success

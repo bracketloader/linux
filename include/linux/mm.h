@@ -257,6 +257,8 @@ extern unsigned int kobjsize(const void *objp);
 #define VM_HIGH_ARCH_2	BIT(VM_HIGH_ARCH_BIT_2)
 #define VM_HIGH_ARCH_3	BIT(VM_HIGH_ARCH_BIT_3)
 #define VM_HIGH_ARCH_4	BIT(VM_HIGH_ARCH_BIT_4)
+
+#define VM_WIPEONRELEASE BIT(37)       /* Clear pages when releasing them */
 #endif /* CONFIG_ARCH_USES_HIGH_VMA_FLAGS */
 
 #ifdef CONFIG_ARCH_HAS_PKEYS
@@ -296,6 +298,10 @@ extern unsigned int kobjsize(const void *objp);
 
 #ifndef VM_GROWSUP
 # define VM_GROWSUP	VM_NONE
+#endif
+
+#ifndef VM_WIPEONRELEASE
+# define VM_WIPEONRELEASE VM_NONE
 #endif
 
 /* Bits set in the VMA until the stack is in its final location */
