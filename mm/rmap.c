@@ -1251,12 +1251,18 @@ out:
 	unlock_page_memcg(page);
 }
 
-static void page_remove_anon_compound_rmap(struct page *page)
+static void page_remove_anon_compound_rmap(struct vm_area_struct *vma,
+					   struct page *page)
 {
 	int i, nr;
 
 	if (!atomic_add_negative(-1, compound_mapcount_ptr(page)))
 		return;
+
+	if (unlikely(vma->vm_flags & VM_WIPEONRELEASE))
+		for (i = 0; i < HPAGE_PMD_NR; i++)
+			if (page_mapcount(page) == 0)
+				clear_highpage(&page[i]);
 
 	/* Hugepages are not counted in NR_ANON_PAGES for now. */
 	if (unlikely(PageHuge(page)))
@@ -1273,8 +1279,15 @@ static void page_remove_anon_compound_rmap(struct page *page)
 		 * themi are still mapped.
 		 */
 		for (i = 0, nr = 0; i < HPAGE_PMD_NR; i++) {
-			if (atomic_add_negative(-1, &page[i]._mapcount))
+			if (atomic_add_negative(-1, &page[i]._mapcount)) {
 				nr++;
+				/*
+				 * These will have been missed in the first
+				 * pass, so clear them now
+				 */
+				if (unlikely(vma->vm_flags & VM_WIPEONRELEASE))
+					clear_highpage(&page[i]);
+			}
 		}
 	} else {
 		nr = HPAGE_PMD_NR;
@@ -1292,17 +1305,19 @@ static void page_remove_anon_compound_rmap(struct page *page)
 /**
  * page_remove_rmap - take down pte mapping from a page
  * @page:	page to remove mapping from
+ * @vma:	VMA the page belongs to
  * @compound:	uncharge the page as compound or small page
  *
  * The caller needs to hold the pte lock.
  */
-void page_remove_rmap(struct page *page, bool compound)
+void page_remove_rmap(struct page *page, struct vm_area_struct *vma,
+		      bool compound)
 {
 	if (!PageAnon(page))
 		return page_remove_file_rmap(page, compound);
 
 	if (compound)
-		return page_remove_anon_compound_rmap(page);
+		return page_remove_anon_compound_rmap(vma, page);
 
 	/* page still mapped by someone else? */
 	if (!atomic_add_negative(-1, &page->_mapcount))
@@ -1320,6 +1335,9 @@ void page_remove_rmap(struct page *page, bool compound)
 
 	if (PageTransCompound(page))
 		deferred_split_huge_page(compound_head(page));
+
+	if (unlikely(vma->vm_flags & VM_WIPEONRELEASE))
+		clear_highpage(page);
 
 	/*
 	 * It would be tidy to reset the PageAnon mapping here,
@@ -1652,7 +1670,7 @@ discard:
 		 *
 		 * See Documentation/vm/mmu_notifier.rst
 		 */
-		page_remove_rmap(subpage, PageHuge(page));
+		page_remove_rmap(subpage, vma, PageHuge(page));
 		put_page(page);
 	}
 

@@ -1499,6 +1499,43 @@ struct page *get_dump_page(unsigned long addr)
 }
 #endif /* CONFIG_ELF_CORE */
 
+static int trigger_cow_pte_entry(pte_t *pte, unsigned long addr,
+				 unsigned long next, struct mm_walk *walk)
+{
+	int ret = __get_user_pages(current, current->mm, addr, 1,
+				   FOLL_WRITE | FOLL_TOUCH, NULL, NULL, NULL);
+	if (ret != 1)
+		return ret;
+	return 0;
+}
+
+static int trigger_cow_hugetlb_range(pte_t *pte, unsigned long hmask,
+				     unsigned long addr, unsigned long end,
+				     struct mm_walk *walk)
+{
+#ifdef CONFIG_HUGETLB_PAGE
+	int ret = __get_user_pages(current, current->mm, addr, 1,
+				   FOLL_WRITE | FOLL_TOUCH, NULL, NULL, NULL);
+
+	if (ret != 1)
+		return ret;
+#else
+	BUG();
+#endif
+	return 0;
+}
+
+int trigger_cow(unsigned long start, unsigned long end)
+{
+	struct mm_walk cow_walk = {
+		.pte_entry = trigger_cow_pte_entry,
+		.hugetlb_entry = trigger_cow_hugetlb_range,
+		.mm = current->mm,
+	};
+
+	return walk_page_range(start, end, &cow_walk);
+}
+
 /*
  * Generic Fast GUP
  *

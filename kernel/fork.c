@@ -584,6 +584,16 @@ static __latent_entropy int dup_mmap(struct mm_struct *mm,
 		if (!(tmp->vm_flags & VM_WIPEONFORK))
 			retval = copy_page_range(mm, oldmm, mpnt);
 
+		/*
+		 * If VM_WIPEONRELEASE is set and VM_WIPEONFORK isn't, ensure
+		 * that the any mapped pages are copied rather than being
+		 * left as CoW - this avoids situations where a parent
+		 * has pages marked as WIPEONRELEASE and a child doesn't
+		 */
+		if (unlikely((tmp->vm_flags & (VM_WIPEONRELEASE|VM_WIPEONFORK))
+			     == VM_WIPEONRELEASE))
+			trigger_cow(tmp->vm_start, tmp->vm_end);
+
 		if (tmp->vm_ops && tmp->vm_ops->open)
 			tmp->vm_ops->open(tmp);
 
