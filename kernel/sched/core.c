@@ -3668,8 +3668,10 @@ pick_task(struct rq *rq, const struct sched_class *class, struct task_struct *ma
 		 * If class_pick is tagged, return it only if it has
 		 * higher priority than max.
 		 */
-		if (max && class_pick->core_cookie &&
-		    prio_less(class_pick, max))
+		bool max_is_higher = sched_feat(CORESCHED_STALL_FIX) ?
+				     max && !prio_less(max, class_pick) :
+				     max && prio_less(class_pick, max);
+		if (class_pick->core_cookie && max_is_higher)
 			return idle_sched_class.pick_task(rq);
 
 		return class_pick;

@@ -90,3 +90,9 @@ SCHED_FEAT(WA_BIAS, true)
  * UtilEstimation. Use estimated CPU utilization.
  */
 SCHED_FEAT(UTIL_EST, true)
+
+/*
+ * Prevent task stall due to vruntime comparison limitation across
+ * cpus.
+ */
+SCHED_FEAT(CORESCHED_STALL_FIX, false)
