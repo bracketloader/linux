@@ -76,6 +76,10 @@ enum lsm_event {
 	LSM_POLICY_CHANGE,
 };
 
+/*
+ *  If you add to this, remember to extend lockdown_reasons in
+ *  security/lockdown/lockdown.c.
+ */
 enum lockdown_reason {
 	LOCKDOWN_NONE,
 	LOCKDOWN_INTEGRITY_MAX,
