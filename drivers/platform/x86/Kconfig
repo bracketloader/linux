@@ -1335,6 +1335,17 @@ config PCENGINES_APU2
 	  To compile this driver as a module, choose M here: the module
 	  will be called pcengines-apuv2.
 
+config COREBOOT_RFKILL
+       tristate "RFKill support for Coreboot based platforms"
+       depends on ACPI && RFKILL
+       help
+         This driver provides support for the generic Coreboot rfkill
+	 interface. On systems that provide this interface, this driver
+	 will allow the system radios to be blocked and unblocked.
+
+	 To compile this driver as a module, choose M here: the module
+	 will be called coreboot-rfkill.
+
 source "drivers/platform/x86/intel_speed_select_if/Kconfig"
 
 endif # X86_PLATFORM_DEVICES
