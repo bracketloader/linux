@@ -135,6 +135,7 @@ static void setup_efi_pci(struct boot_params *params)
 	unsigned long size = 0;
 	unsigned long nr_pci;
 	struct setup_data *data;
+	u16 class, command;
 	int i;
 
 	status = efi_call_early(locate_handle,
@@ -175,6 +176,30 @@ static void setup_efi_pci(struct boot_params *params)
 					&pci_proto, (void **)&pci);
 		if (status != EFI_SUCCESS || !pci)
 			continue;
+
+		status = efi_call_proto(efi_pci_io_protocol, pci.read, pci,
+					EfiPciIoWidthUint16, PCI_CLASS_DEVICE,
+					1, &class);
+
+		if (status == EFI_SUCCESS && class == PCI_CLASS_BRIDGE_PCI) {
+			/* Disable busmastering */
+			status = efi_call_proto(efi_pci_io_protocol, pci.read,
+						pci, EfiPciIoWidthUint16,
+						PCI_COMMAND, 1, &command);
+			if (status == EFI_SUCCESS &&
+			    command & PCI_COMMAND_MASTER) {
+				command &= ~ PCI_COMMAND_MASTER;
+				status = efi_call_proto(efi_pci_io_protocol,
+							pci.write, pci,
+							EfiPciIoWidthUint16,
+							PCI_COMMAND, 1,
+							&command);
+				if (status != EFI_SUCCESS) {
+					efi_printk(sys_table,
+						   "Failed to disable PCI busmastering\n");
+				}
+			}
+		}
 
 		status = preserve_pci_rom_image(pci, &rom);
 		if (status != EFI_SUCCESS)
