@@ -52,6 +52,25 @@ struct int3400_thermal_priv {
 	u8 uuid_bitmap;
 	int rel_misc_dev_res;
 	int current_uuid_index;
+	char *data_vault;
+};
+
+static ssize_t data_vault_read(struct file *file, struct kobject *kobj,
+	     struct bin_attribute *attr, char *buf, loff_t off, size_t count)
+{
+	memcpy(buf, attr->private + off, count);
+	return count;
+}
+
+static BIN_ATTR_RO(data_vault, 0);
+
+static struct bin_attribute *data_attributes[] = {
+	&bin_attr_data_vault,
+	NULL,
+};
+
+static const struct attribute_group data_attribute_group = {
+	.bin_attrs = data_attributes,
 };
 
 static ssize_t available_uuids_show(struct device *dev,
@@ -79,6 +98,7 @@ static ssize_t current_uuid_show(struct device *dev,
 {
 	struct int3400_thermal_priv *priv = dev_get_drvdata(dev);
 
+	printk("current_uuid_index is: %d\n", priv->current_uuid_index);
 	if (priv->uuid_bitmap & (1 << priv->current_uuid_index))
 		return sprintf(buf, "%s\n",
 			       int3400_thermal_uuids[priv->current_uuid_index]);
@@ -280,8 +300,11 @@ static struct thermal_zone_params int3400_thermal_params = {
 
 static int int3400_thermal_probe(struct platform_device *pdev)
 {
+	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
 	struct acpi_device *adev = ACPI_COMPANION(&pdev->dev);
 	struct int3400_thermal_priv *priv;
+	union acpi_object *obj;
+	acpi_status status;
 	int result;
 
 	if (!adev)
@@ -309,6 +332,21 @@ static int int3400_thermal_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, priv);
 
+	status = acpi_evaluate_object(priv->adev->handle, "GDDV", NULL, &buffer);
+	if (ACPI_SUCCESS(status) && buffer.length) {
+		obj = buffer.pointer;
+		if (obj->type == ACPI_TYPE_PACKAGE && obj->package.count == 1
+			&& obj->package.elements[0].type == ACPI_TYPE_BUFFER) {
+			priv->data_vault = kmemdup(obj->package.elements[0].buffer.pointer, obj->package.elements[0].buffer.length, GFP_KERNEL);
+			bin_attr_data_vault.private = priv->data_vault;
+			bin_attr_data_vault.size = obj->package.elements[0].buffer.length;
+		}
+
+		kfree(buffer.pointer);
+	} else {
+		printk("Failed to evaluate GDDV: %x\n", status);
+	}
+		
 	int3400_thermal_ops.get_mode = int3400_thermal_get_mode;
 	int3400_thermal_ops.set_mode = int3400_thermal_set_mode;
 
@@ -327,6 +365,12 @@ static int int3400_thermal_probe(struct platform_device *pdev)
 	if (result)
 		goto free_rel_misc;
 
+	if (priv->data_vault) {
+		result = sysfs_create_group(&pdev->dev.kobj, &data_attribute_group);
+		if (result)
+			goto free_uuid;
+	}
+	
 	result = acpi_install_notify_handler(
 			priv->adev->handle, ACPI_DEVICE_NOTIFY, int3400_notify,
 			(void *)priv);
@@ -336,6 +380,9 @@ static int int3400_thermal_probe(struct platform_device *pdev)
 	return 0;
 
 free_sysfs:
+	if (priv->data_vault) 
+		sysfs_remove_group(&pdev->dev.kobj, &data_attribute_group);
+free_uuid:
 	sysfs_remove_group(&pdev->dev.kobj, &uuid_attribute_group);
 free_rel_misc:
 	if (!priv->rel_misc_dev_res)
@@ -360,8 +407,11 @@ static int int3400_thermal_remove(struct platform_device *pdev)
 	if (!priv->rel_misc_dev_res)
 		acpi_thermal_rel_misc_device_remove(priv->adev->handle);
 
+	if (priv->data_vault)
+		sysfs_remove_group(&pdev->dev.kobj, &data_attribute_group);
 	sysfs_remove_group(&pdev->dev.kobj, &uuid_attribute_group);
 	thermal_zone_device_unregister(priv->thermal);
+	kfree(priv->data_vault);
 	kfree(priv->trts);
 	kfree(priv->arts);
 	kfree(priv);
