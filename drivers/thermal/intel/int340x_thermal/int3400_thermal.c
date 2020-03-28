@@ -301,11 +301,12 @@ static struct thermal_zone_params int3400_thermal_params = {
 static int int3400_thermal_probe(struct platform_device *pdev)
 {
 	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
+	struct acpi_buffer odvp = { ACPI_ALLOCATE_BUFFER, NULL };	
 	struct acpi_device *adev = ACPI_COMPANION(&pdev->dev);
 	struct int3400_thermal_priv *priv;
 	union acpi_object *obj;
 	acpi_status status;
-	int result;
+	int result, i;
 
 	if (!adev)
 		return -ENODEV;
@@ -332,6 +333,16 @@ static int int3400_thermal_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, priv);
 
+	status = acpi_evaluate_object(priv->adev->handle, "ODVP", NULL, &odvp);
+	if (ACPI_SUCCESS(status)) {
+		obj = odvp.pointer;
+		if (obj->type == ACPI_TYPE_PACKAGE) {
+			for (i=0; i<obj->package.count; i++) {
+				printk("Obj %d is 0x%x\n", i, obj->package.elements[0].integer.value);
+			}
+		}
+	}
+	
 	status = acpi_evaluate_object(priv->adev->handle, "GDDV", NULL, &buffer);
 	if (ACPI_SUCCESS(status) && buffer.length) {
 		obj = buffer.pointer;
