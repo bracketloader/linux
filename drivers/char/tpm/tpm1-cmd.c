@@ -840,3 +840,38 @@ int tpm1_get_pcr_allocation(struct tpm_chip *chip)
 
 	return 0;
 }
+
+#ifdef CONFIG_TCG_TPM_RESTRICT_PCR
+int tpm1_cmd_restricted(struct tpm_chip *chip, u8 *buffer, size_t size)
+{
+	struct tpm_header *header = (struct tpm_header *)buffer;
+	char len, offset;
+	u32 *pcr;
+	int pos;
+
+	switch (be32_to_cpu(header->ordinal)) {
+	case TPM_ORD_PCR_EXTEND:
+		if (size < (TPM_HEADER_SIZE + sizeof(u32)))
+			return -EINVAL;
+		pcr = (u32 *)&buffer[TPM_HEADER_SIZE];
+		if (be32_to_cpu(*pcr) == TPM_RESTRICTED_PCR)
+			return -EPERM;
+		break;
+	case TPM_ORD_PCR_RESET:
+		if (size < (TPM_HEADER_SIZE + 1))
+			return -EINVAL;
+		len = buffer[TPM_HEADER_SIZE];
+		if (size < (TPM_HEADER_SIZE + 1 + len))
+			return -EINVAL;
+		offset = TPM_RESTRICTED_PCR/3;
+		if (len < offset)
+			break;
+		pos = TPM_HEADER_SIZE + 1 + offset;
+		if (buffer[pos] & (1 << (TPM_RESTRICTED_PCR - 2 * offset)))
+			return -EPERM;
+		break;
+	}
+
+	return 0;
+}
+#endif

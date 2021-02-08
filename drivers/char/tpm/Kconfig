@@ -199,4 +199,14 @@ config TCG_FTPM_TEE
 	  This driver proxies for firmware TPM running in TEE.
 
 source "drivers/char/tpm/st33zp24/Kconfig"
+
+config TCG_TPM_RESTRICT_PCR
+	bool "Restrict userland access to PCR 23"
+	depends on TCG_TPM
+	help
+	  If set, block userland from extending or resetting PCR 23. This
+	  allows it to be restricted to in-kernel use, preventing userland
+	  from being able to make use of data sealed to the TPM by the kernel.
+	  This is required for secure hibernation support, but should be left
+	  disabled if any userland may require access to PCR23.
 endif # TCG_TPM

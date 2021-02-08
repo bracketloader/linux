@@ -262,7 +262,7 @@ static int tpm2_map_command(struct tpm_chip *chip, u32 cc, u8 *cmd)
 	return 0;
 }
 
-static int tpm_find_and_validate_cc(struct tpm_chip *chip,
+int tpm_find_and_validate_cc(struct tpm_chip *chip,
 				    struct tpm_space *space,
 				    const void *cmd, size_t len)
 {
