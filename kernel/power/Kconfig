@@ -92,6 +92,21 @@ config HIBERNATION_SNAPSHOT_DEV
 
 	  If in doubt, say Y.
 
+config SECURE_HIBERNATION
+       bool "Implement secure hibernation support"
+       depends on HIBERNATION && TCG_TPM
+       select KEYS
+       select TRUSTED_KEYS
+       select CRYPTO
+       select CRYPTO_SHA256
+       select CRYPTO_AES
+       select TCG_TPM_RESTRICT_PCR
+       help
+         Use a TPM-backed key to securely determine whether a hibernation
+	 image was written out by the kernel and has not been tampered with.
+	 This requires a TCG-compliant TPM2 device, which is present on most
+	 modern hardware.
+
 config PM_STD_PARTITION
 	string "Default resume partition"
 	depends on HIBERNATION
