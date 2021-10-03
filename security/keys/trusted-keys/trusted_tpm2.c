@@ -215,6 +215,63 @@ static void tpm2_buf_append_auth(struct tpm_buf *buf, u32 session_handle,
 		tpm_buf_append(buf, hmac, hmac_len);
 }
 
+static int tpm2_unpack_blob(struct trusted_key_payload *payload)
+{
+	int tmp, offset;
+
+	/* Find the length of the private data */
+	tmp = be16_to_cpup((__be16 *) &payload->tpm_blob[0]);
+	offset = tmp + 2;
+	if (offset > payload->tpm_blob_len)
+		return -EFAULT;
+
+	/* Find the length of the public data */
+	tmp = be16_to_cpup((__be16 *) &payload->tpm_blob[offset]);
+	offset += tmp + 2;
+	if (offset > payload->tpm_blob_len)
+		return -EFAULT;
+
+	/* Find the length of the creation data and store it */
+	tmp = be16_to_cpup((__be16 *) &payload->tpm_blob[offset]);
+	if (tmp > MAX_CREATION_DATA)
+		return -E2BIG;
+
+	if ((offset + tmp + 2) > payload->tpm_blob_len)
+		return -EFAULT;
+
+	payload->creation = &payload->tpm_blob[offset + 2];
+	payload->creation_len = tmp;
+	offset += tmp + 2;
+
+	/* Find the length of the creation hash and store it */
+	tmp = be16_to_cpup((__be16 *) &payload->tpm_blob[offset]);
+	if (tmp > MAX_DIGEST_SIZE)
+		return -E2BIG;
+
+	if ((offset + tmp + 2) > payload->tpm_blob_len)
+		return -EFAULT;
+
+	payload->creation_hash = &payload->tpm_blob[offset + 2];
+	payload->creation_hash_len = tmp;
+	offset += tmp + 2;
+
+	/*
+	 * Store the creation ticket. TPMT_TK_CREATION is two bytes of tag,
+	 * four bytes of handle, and then the digest length and digest data
+	 */
+	tmp = be16_to_cpup((__be16 *) &payload->tpm_blob[offset + 6]);
+	if (tmp > MAX_TK)
+		return -E2BIG;
+
+	if ((offset + tmp + 8) > payload->tpm_blob_len)
+		return -EFAULT;
+
+	payload->tk = &payload->tpm_blob[offset];
+	payload->tk_len = tmp + 8;
+
+	return 0;
+}
+
 /**
  * tpm2_seal_trusted() - seal the payload of a trusted key
  *
@@ -229,6 +286,7 @@ int tpm2_seal_trusted(struct tpm_chip *chip,
 		      struct trusted_key_options *options)
 {
 	int blob_len = 0;
+	unsigned int offset;
 	struct tpm_buf buf;
 	u32 hash;
 	u32 flags;
@@ -317,15 +375,20 @@ int tpm2_seal_trusted(struct tpm_chip *chip,
 		rc = -E2BIG;
 		goto out;
 	}
-	if (tpm_buf_length(&buf) < TPM_HEADER_SIZE + 4 + blob_len) {
+	offset = TPM_HEADER_SIZE + 4;
+	if (tpm_buf_length(&buf) < offset + blob_len) {
 		rc = -EFAULT;
 		goto out;
 	}
+
+	memcpy(payload->tpm_blob, &buf.data[offset], blob_len);
+	payload->tpm_blob_len = blob_len;
 
 	blob_len = tpm2_key_encode(payload, options,
 				   &buf.data[TPM_HEADER_SIZE + 4],
 				   blob_len);
 
+	rc = tpm2_unpack_blob(payload);
 out:
 	tpm_buf_destroy(&buf);
 
@@ -431,7 +494,10 @@ static int tpm2_load_cmd(struct tpm_chip *chip,
 	if (!rc)
 		*blob_handle = be32_to_cpup(
 			(__be32 *) &buf.data[TPM_HEADER_SIZE]);
+	else
+		goto out;
 
+	rc = tpm2_unpack_blob(payload);
 out:
 	if (blob != payload->blob)
 		kfree(blob);
