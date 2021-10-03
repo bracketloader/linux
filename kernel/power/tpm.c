@@ -192,13 +192,18 @@ static int tpm_setup_policy(struct tpm_chip *chip, int *session_handle)
 	/* SHA256 banks */
 	tpm_buf_append_u16(&buf, TPM_ALG_SHA256);
 
-	/* Select PCR 23 */
-	tpm_buf_append_u32(&buf, 0x03000080);
+	/* Select PCR 21 */
+	tpm_buf_append_u32(&buf, 0x03000020);
 
-	rc = tpm_send(chip, buf.data, tpm_buf_length(&buf));
+	// Put ourselves in locality 2 for the measurement, ensuring that
+	// userland cannot spoof it
+	rc = tpm_request_locality(chip, 2);
 
 	if (rc)
 		goto out;
+
+	rc = tpm_send(chip, buf.data, tpm_buf_length(&buf));
+	tpm_request_locality(chip, 0);
 
 out:
 	tpm_buf_destroy(&buf);
@@ -289,6 +294,17 @@ out:
 	return rc;
 }
 
+static int swsusp_pcr_reset(struct tpm_chip *chip)
+{
+	int rc;
+	rc = tpm_request_locality(chip, 2);
+	if (rc != 0)
+		return rc;
+	rc = tpm_pcr_reset(chip, 21);
+	tpm_request_locality(chip, 0);
+	return rc;
+}
+
 int swsusp_encrypt_digest(struct swsusp_header *header)
 {
 	const struct cred *cred = current_cred();
@@ -311,7 +327,7 @@ int swsusp_encrypt_digest(struct swsusp_header *header)
 	if (!(tpm_is_tpm2(chip)))
 		return -ENODEV;
 
-	ret = tpm_pcr_reset(chip, 23);
+	ret = swsusp_pcr_reset(chip);
 	if (ret != 0)
 		return ret;
 
@@ -334,7 +350,7 @@ int swsusp_encrypt_digest(struct swsusp_header *header)
 		goto reset;
 	}
 
-	ret = tpm_pcr_extend(chip, 23, digests);
+	ret = tpm_pcr_extend(chip, 21, digests);
 	if (ret != 0)
 		goto reset;
 
@@ -388,7 +404,7 @@ reset:
 	kfree(keyinfo);
 	kfree(policydigest);
 	kfree(digests);
-	tpm_pcr_reset(chip, 23);
+	swsusp_pcr_reset(chip);
 	return ret;
 }
 
@@ -414,7 +430,7 @@ int swsusp_decrypt_digest(struct swsusp_header *header)
 	if (!(tpm_is_tpm2(chip)))
 		return -ENODEV;
 
-	ret = tpm_pcr_reset(chip, 23);
+	ret = swsusp_pcr_reset(chip);
 	if (ret != 0)
 		return ret;
 
@@ -431,7 +447,7 @@ int swsusp_decrypt_digest(struct swsusp_header *header)
 			memcpy(&digests[i], &digest, sizeof(digest));
 	}
 
-	ret = tpm_pcr_extend(chip, 23, digests);
+	ret = tpm_pcr_extend(chip, 21, digests);
 	if (ret != 0)
 		goto reset;
 
@@ -505,8 +521,8 @@ int swsusp_decrypt_digest(struct swsusp_header *header)
 		goto out;
 	}
 
-	/* PCR 23 selected */
-	if (be32_to_cpu(*(int *)&payload->creation[6]) != 0x03000080) {
+	/* PCR 21 selected */
+	if (be32_to_cpu(*(int *)&payload->creation[6]) != 0x03000020) {
 		ret = -EINVAL;
 		goto out;
 	}
@@ -523,6 +539,12 @@ int swsusp_decrypt_digest(struct swsusp_header *header)
 		goto out;
 	}
 
+	// Verify that the correct locality was in use
+	if (*(char *)&payload->creation[12+SHA256_DIGEST_SIZE] != (1 << 2)) {
+		ret = -EINVAL;
+		goto out;
+	}
+
 	ret = swsusp_enc_dec(payload, header->digest, 0);
 out:
 	key_revoke(key);
@@ -531,7 +553,7 @@ reset:
 	kfree(keyinfo);
 	kfree(blobstring);
 	kfree(digests);
-	tpm_pcr_reset(chip, 23);
+	swsusp_pcr_reset(chip);
 	return ret;
 }
 
@@ -585,5 +607,12 @@ int secure_hibernation_available(void)
 	if (!(tpm_is_tpm2(chip)))
 		return -ENODEV;
 
+	// We depend on the ability to enter TPM locality 2 to ensure that
+	// the measurement was created in-kernel and with a kernel-resettable
+	// PCR
+	if (tpm_request_locality(chip, 2) != 0)
+		return -ENODEV;
+
+	tpm_request_locality(chip, 0);
 	return 0;
 }
