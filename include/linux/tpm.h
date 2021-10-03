@@ -425,6 +425,7 @@ extern int tpm_send(struct tpm_chip *chip, void *cmd, size_t buflen);
 extern int tpm_get_random(struct tpm_chip *chip, u8 *data, size_t max);
 extern struct tpm_chip *tpm_default_chip(void);
 void tpm2_flush_context(struct tpm_chip *chip, u32 handle);
+extern int tpm_request_locality(struct tpm_chip *chip, int locality);
 #else
 static inline int tpm_is_tpm2(struct tpm_chip *chip)
 {
@@ -452,6 +453,11 @@ static inline int tpm_send(struct tpm_chip *chip, void *cmd, size_t buflen)
 	return -ENODEV;
 }
 static inline int tpm_get_random(struct tpm_chip *chip, u8 *data, size_t max)
+{
+	return -ENODEV;
+}
+
+static inline int tpm_request_locality(struct tpm_chip *chip, int locality)
 {
 	return -ENODEV;
 }

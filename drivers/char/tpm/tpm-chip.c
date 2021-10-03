@@ -32,14 +32,14 @@ struct class *tpm_class;
 struct class *tpmrm_class;
 dev_t tpm_devt;
 
-static int tpm_request_locality(struct tpm_chip *chip)
+int tpm_request_locality(struct tpm_chip *chip, int locality)
 {
 	int rc;
 
 	if (!chip->ops->request_locality)
 		return 0;
 
-	rc = chip->ops->request_locality(chip, 0);
+	rc = chip->ops->request_locality(chip, locality);
 	if (rc < 0)
 		return rc;
 
@@ -104,7 +104,7 @@ int tpm_chip_start(struct tpm_chip *chip)
 	tpm_clk_enable(chip);
 
 	if (chip->locality == -1) {
-		ret = tpm_request_locality(chip);
+		ret = tpm_request_locality(chip, 0);
 		if (ret) {
 			tpm_clk_disable(chip);
 			return ret;
