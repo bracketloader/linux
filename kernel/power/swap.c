@@ -31,6 +31,8 @@
 #include <linux/kthread.h>
 #include <linux/crc32.h>
 #include <linux/ktime.h>
+#include <crypto/hash.h>
+#include <crypto/sha2.h>
 
 #include "power.h"
 
@@ -95,17 +97,20 @@ struct swap_map_page_list {
 struct swap_map_handle {
 	struct swap_map_page *cur;
 	struct swap_map_page_list *maps;
+	struct shash_desc *desc;
 	sector_t cur_swap;
 	sector_t first_sector;
 	unsigned int k;
 	unsigned long reqd_free_pages;
 	u32 crc32;
+	u8 digest[SHA256_DIGEST_SIZE];
 };
 
 struct swsusp_header {
 	char reserved[PAGE_SIZE - 20 - sizeof(sector_t) - sizeof(int) -
-	              sizeof(u32)];
+		      sizeof(u32) - SHA256_DIGEST_SIZE];
 	u32	crc32;
+	u8	digest[SHA256_DIGEST_SIZE];
 	sector_t image;
 	unsigned int flags;	/* Flags to pass to the "boot" kernel */
 	char	orig_sig[10];
@@ -305,6 +310,9 @@ static int hib_wait_io(struct hib_bio_batch *hb)
 	 * We are relying on the behavior of blk_plug that a thread with
 	 * a plug will flush the plug list before sleeping.
 	 */
+	if (!hb)
+		return 0;
+
 	wait_event(hb->wait, atomic_read(&hb->count) == 0);
 	return blk_status_to_errno(hb->error);
 }
@@ -327,6 +335,8 @@ static int mark_swapfiles(struct swap_map_handle *handle, unsigned int flags)
 		swsusp_header->flags = flags;
 		if (flags & SF_CRC32_MODE)
 			swsusp_header->crc32 = handle->crc32;
+		memcpy(swsusp_header->digest, handle->digest,
+		       SHA256_DIGEST_SIZE);
 		error = hib_submit_io(REQ_OP_WRITE, REQ_SYNC,
 				      swsusp_resume_block, swsusp_header, NULL);
 	} else {
@@ -417,6 +427,7 @@ static void release_swap_writer(struct swap_map_handle *handle)
 static int get_swap_writer(struct swap_map_handle *handle)
 {
 	int ret;
+	struct crypto_shash *tfm;
 
 	ret = swsusp_swap_check();
 	if (ret) {
@@ -437,7 +448,28 @@ static int get_swap_writer(struct swap_map_handle *handle)
 	handle->k = 0;
 	handle->reqd_free_pages = reqd_free_pages();
 	handle->first_sector = handle->cur_swap;
+
+	tfm = crypto_alloc_shash("sha256", 0, 0);
+	if (IS_ERR(tfm)) {
+		ret = -EINVAL;
+		goto err_rel;
+	}
+	handle->desc = kmalloc(sizeof(struct shash_desc) +
+			       crypto_shash_descsize(tfm), GFP_KERNEL);
+	if (!handle->desc) {
+		ret = -ENOMEM;
+		goto err_rel;
+	}
+
+	handle->desc->tfm = tfm;
+
+	ret = crypto_shash_init(handle->desc);
+	if (ret != 0)
+		goto err_free;
+
 	return 0;
+err_free:
+	kfree(handle->desc);
 err_rel:
 	release_swap_writer(handle);
 err_close:
@@ -446,7 +478,7 @@ err_close:
 }
 
 static int swap_write_page(struct swap_map_handle *handle, void *buf,
-		struct hib_bio_batch *hb)
+			   struct hib_bio_batch *hb, bool hash)
 {
 	int error = 0;
 	sector_t offset;
@@ -454,6 +486,7 @@ static int swap_write_page(struct swap_map_handle *handle, void *buf,
 	if (!handle->cur)
 		return -EINVAL;
 	offset = alloc_swapdev_block(root_swap);
+	crypto_shash_update(handle->desc, buf, PAGE_SIZE);
 	error = write_page(buf, offset, hb);
 	if (error)
 		return error;
@@ -496,6 +529,7 @@ static int flush_swap_writer(struct swap_map_handle *handle)
 static int swap_writer_finish(struct swap_map_handle *handle,
 		unsigned int flags, int error)
 {
+	crypto_shash_final(handle->desc, handle->digest);
 	if (!error) {
 		pr_info("S");
 		error = mark_swapfiles(handle, flags);
@@ -560,7 +594,7 @@ static int save_image(struct swap_map_handle *handle,
 		ret = snapshot_read_next(snapshot);
 		if (ret <= 0)
 			break;
-		ret = swap_write_page(handle, data_of(*snapshot), &hb);
+		ret = swap_write_page(handle, data_of(*snapshot), &hb, true);
 		if (ret)
 			break;
 		if (!(nr_pages % m))
@@ -841,7 +875,7 @@ static int save_image_lzo(struct swap_map_handle *handle,
 			     off += PAGE_SIZE) {
 				memcpy(page, data[thr].cmp + off, PAGE_SIZE);
 
-				ret = swap_write_page(handle, page, &hb);
+				ret = swap_write_page(handle, page, &hb, true);
 				if (ret)
 					goto out_finish;
 			}
@@ -935,7 +969,7 @@ int swsusp_write(unsigned int flags)
 		goto out_finish;
 	}
 	header = (struct swsusp_info *)data_of(snapshot);
-	error = swap_write_page(&handle, header, NULL);
+	error = swap_write_page(&handle, header, NULL, false);
 	if (!error) {
 		error = (flags & SF_NOCOMPRESS_MODE) ?
 			save_image(&handle, &snapshot, pages - 1) :
@@ -971,6 +1005,7 @@ static int get_swap_reader(struct swap_map_handle *handle,
 	int error;
 	struct swap_map_page_list *tmp, *last;
 	sector_t offset;
+	struct crypto_shash *tfm;
 
 	*flags_p = swsusp_header->flags;
 
@@ -1008,11 +1043,34 @@ static int get_swap_reader(struct swap_map_handle *handle,
 	}
 	handle->k = 0;
 	handle->cur = handle->maps->map;
+
+	tfm = crypto_alloc_shash("sha256", 0, 0);
+	if (IS_ERR(tfm)) {
+		error = -EINVAL;
+		goto err_rel;
+	}
+	handle->desc = kmalloc(sizeof(struct shash_desc) +
+			       crypto_shash_descsize(tfm), GFP_KERNEL);
+	if (!handle->desc) {
+		error = -ENOMEM;
+		goto err_rel;
+	}
+
+	handle->desc->tfm = tfm;
+
+	error = crypto_shash_init(handle->desc);
+	if (error != 0)
+		goto err_free;
 	return 0;
+err_free:
+	kfree(handle->desc);
+err_rel:
+	release_swap_reader(handle);
+	return error;
 }
 
 static int swap_read_page(struct swap_map_handle *handle, void *buf,
-		struct hib_bio_batch *hb)
+			  struct hib_bio_batch *hb, bool hash)
 {
 	sector_t offset;
 	int error;
@@ -1026,6 +1084,7 @@ static int swap_read_page(struct swap_map_handle *handle, void *buf,
 	error = hib_submit_io(REQ_OP_READ, 0, offset, buf, hb);
 	if (error)
 		return error;
+	crypto_shash_update(handle->desc, buf, PAGE_SIZE);
 	if (++handle->k >= MAP_PAGE_ENTRIES) {
 		handle->k = 0;
 		free_page((unsigned long)handle->maps->map);
@@ -1040,11 +1099,21 @@ static int swap_read_page(struct swap_map_handle *handle, void *buf,
 	return error;
 }
 
-static int swap_reader_finish(struct swap_map_handle *handle)
+static int swap_reader_finish(struct swap_map_handle *handle,
+			      struct swsusp_info *header)
 {
+	int ret = 0;
+
+	crypto_shash_final(handle->desc, handle->digest);
+	if (memcmp(handle->digest, swsusp_header->digest,
+		   SHA256_DIGEST_SIZE) != 0) {
+		pr_err("Image digest doesn't match header digest\n");
+		ret = -ENODATA;
+	}
+
 	release_swap_reader(handle);
 
-	return 0;
+	return ret;
 }
 
 /**
@@ -1061,11 +1130,20 @@ static int load_image(struct swap_map_handle *handle,
 	int ret = 0;
 	ktime_t start;
 	ktime_t stop;
-	struct hib_bio_batch hb;
+	struct hib_bio_batch *hb, real_hb;
 	int err2;
 	unsigned nr_pages;
 
-	hib_init_batch(&hb);
+	/*
+	 * If we're calculating the SHA256 of the image, we need the blocks
+	 * to be read in in order
+	 */
+	if (swsusp_header->flags & SF_VERIFY_IMAGE) {
+		hb = NULL;
+	} else {
+		hib_init_batch(&real_hb);
+		hb = &real_hb;
+	}
 
 	clean_pages_on_read = true;
 	pr_info("Loading image data pages (%u pages)...\n", nr_to_read);
@@ -1078,11 +1156,11 @@ static int load_image(struct swap_map_handle *handle,
 		ret = snapshot_write_next(snapshot);
 		if (ret <= 0)
 			break;
-		ret = swap_read_page(handle, data_of(*snapshot), &hb);
+		ret = swap_read_page(handle, data_of(*snapshot), hb, true);
 		if (ret)
 			break;
 		if (snapshot->sync_read)
-			ret = hib_wait_io(&hb);
+			ret = hib_wait_io(hb);
 		if (ret)
 			break;
 		if (!(nr_pages % m))
@@ -1090,8 +1168,8 @@ static int load_image(struct swap_map_handle *handle,
 				nr_pages / m * 10);
 		nr_pages++;
 	}
-	err2 = hib_wait_io(&hb);
-	hib_finish_batch(&hb);
+	err2 = hib_wait_io(hb);
+	hib_finish_batch(hb);
 	stop = ktime_get();
 	if (!ret)
 		ret = err2;
@@ -1166,7 +1244,7 @@ static int load_image_lzo(struct swap_map_handle *handle,
 	unsigned int m;
 	int ret = 0;
 	int eof = 0;
-	struct hib_bio_batch hb;
+	struct hib_bio_batch *hb, real_hb;
 	ktime_t start;
 	ktime_t stop;
 	unsigned nr_pages;
@@ -1179,7 +1257,16 @@ static int load_image_lzo(struct swap_map_handle *handle,
 	struct dec_data *data = NULL;
 	struct crc_data *crc = NULL;
 
-	hib_init_batch(&hb);
+	/*
+	 * If we're calculating the SHA256 of the image, we need the blocks
+	 * to be read in in order
+	 */
+	if (swsusp_header->flags & SF_VERIFY_IMAGE) {
+		hb = NULL;
+	} else {
+		hib_init_batch(&real_hb);
+		hb = &real_hb;
+	}
 
 	/*
 	 * We'll limit the number of threads for decompression to limit memory
@@ -1295,7 +1382,7 @@ static int load_image_lzo(struct swap_map_handle *handle,
 
 	for(;;) {
 		for (i = 0; !eof && i < want; i++) {
-			ret = swap_read_page(handle, page[ring], &hb);
+			ret = swap_read_page(handle, page[ring], hb, true);
 			if (ret) {
 				/*
 				 * On real read error, finish. On end of data,
@@ -1322,7 +1409,7 @@ static int load_image_lzo(struct swap_map_handle *handle,
 			if (!asked)
 				break;
 
-			ret = hib_wait_io(&hb);
+			ret = hib_wait_io(hb);
 			if (ret)
 				goto out_finish;
 			have += asked;
@@ -1376,7 +1463,7 @@ static int load_image_lzo(struct swap_map_handle *handle,
 		 * Wait for more data while we are decompressing.
 		 */
 		if (have < LZO_CMP_PAGES && asked) {
-			ret = hib_wait_io(&hb);
+			ret = hib_wait_io(hb);
 			if (ret)
 				goto out_finish;
 			have += asked;
@@ -1452,7 +1539,7 @@ out_finish:
 	}
 	swsusp_show_speed(start, stop, nr_to_read, "Read");
 out_clean:
-	hib_finish_batch(&hb);
+	hib_finish_batch(hb);
 	for (i = 0; i < ring_size; i++)
 		free_page((unsigned long)page[i]);
 	if (crc) {
@@ -1493,13 +1580,13 @@ int swsusp_read(unsigned int *flags_p)
 	if (error)
 		goto end;
 	if (!error)
-		error = swap_read_page(&handle, header, NULL);
+		error = swap_read_page(&handle, header, NULL, false);
 	if (!error) {
 		error = (*flags_p & SF_NOCOMPRESS_MODE) ?
 			load_image(&handle, &snapshot, header->pages - 1) :
 			load_image_lzo(&handle, &snapshot, header->pages - 1);
 	}
-	swap_reader_finish(&handle);
+	error = swap_reader_finish(&handle, header);
 end:
 	if (!error)
 		pr_debug("Image successfully loaded\n");
