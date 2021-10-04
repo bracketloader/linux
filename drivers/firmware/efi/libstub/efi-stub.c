@@ -203,6 +203,16 @@ efi_status_t __efiapi efi_pe_entry(efi_handle_t handle,
 		goto fail_free_screeninfo;
 	}
 
+	/*
+	 * Do this just before retrieving the event log so we don't need to
+	 * deal with the events ending up in the final events log, which
+	 * may not be implemented.
+	 */
+	if (IS_ENABLED(CONFIG_TCG_TPM_RESTRICT_PCR)) {
+		efi_measure_feature(L"PCR23 restriction", 1);
+	} else {
+		efi_measure_feature(L"PCR23 restriction", 0);
+	}
 	efi_retrieve_tpm2_eventlog();
 
 	/* Ask the firmware to clear memory on unclean shutdown */
