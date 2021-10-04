@@ -32,9 +32,10 @@
 #include <linux/crc32.h>
 #include <linux/ktime.h>
 #include <crypto/hash.h>
-#include <crypto/sha2.h>
 
 #include "power.h"
+#include "swap.h"
+#include "tpm.h"
 
 #define HIBERNATE_SIG	"S1SUSPEND"
 
@@ -88,34 +89,6 @@ struct swap_map_page_list {
 	struct swap_map_page *map;
 	struct swap_map_page_list *next;
 };
-
-/**
- *	The swap_map_handle structure is used for handling swap in
- *	a file-alike way
- */
-
-struct swap_map_handle {
-	struct swap_map_page *cur;
-	struct swap_map_page_list *maps;
-	struct shash_desc *desc;
-	sector_t cur_swap;
-	sector_t first_sector;
-	unsigned int k;
-	unsigned long reqd_free_pages;
-	u32 crc32;
-	u8 digest[SHA256_DIGEST_SIZE];
-};
-
-struct swsusp_header {
-	char reserved[PAGE_SIZE - 20 - sizeof(sector_t) - sizeof(int) -
-		      sizeof(u32) - SHA256_DIGEST_SIZE];
-	u32	crc32;
-	u8	digest[SHA256_DIGEST_SIZE];
-	sector_t image;
-	unsigned int flags;	/* Flags to pass to the "boot" kernel */
-	char	orig_sig[10];
-	char	sig[10];
-} __packed;
 
 static struct swsusp_header *swsusp_header;
 
@@ -337,6 +310,9 @@ static int mark_swapfiles(struct swap_map_handle *handle, unsigned int flags)
 			swsusp_header->crc32 = handle->crc32;
 		memcpy(swsusp_header->digest, handle->digest,
 		       SHA256_DIGEST_SIZE);
+		error = swsusp_encrypt_digest(swsusp_header);
+		if (error)
+			return error;
 		error = hib_submit_io(REQ_OP_WRITE, REQ_SYNC,
 				      swsusp_resume_block, swsusp_header, NULL);
 	} else {
@@ -427,7 +403,6 @@ static void release_swap_writer(struct swap_map_handle *handle)
 static int get_swap_writer(struct swap_map_handle *handle)
 {
 	int ret;
-	struct crypto_shash *tfm;
 
 	ret = swsusp_swap_check();
 	if (ret) {
@@ -449,27 +424,11 @@ static int get_swap_writer(struct swap_map_handle *handle)
 	handle->reqd_free_pages = reqd_free_pages();
 	handle->first_sector = handle->cur_swap;
 
-	tfm = crypto_alloc_shash("sha256", 0, 0);
-	if (IS_ERR(tfm)) {
-		ret = -EINVAL;
+	ret = swsusp_digest_setup(handle);
+	if (ret)
 		goto err_rel;
-	}
-	handle->desc = kmalloc(sizeof(struct shash_desc) +
-			       crypto_shash_descsize(tfm), GFP_KERNEL);
-	if (!handle->desc) {
-		ret = -ENOMEM;
-		goto err_rel;
-	}
-
-	handle->desc->tfm = tfm;
-
-	ret = crypto_shash_init(handle->desc);
-	if (ret != 0)
-		goto err_free;
 
 	return 0;
-err_free:
-	kfree(handle->desc);
 err_rel:
 	release_swap_writer(handle);
 err_close:
@@ -486,7 +445,7 @@ static int swap_write_page(struct swap_map_handle *handle, void *buf,
 	if (!handle->cur)
 		return -EINVAL;
 	offset = alloc_swapdev_block(root_swap);
-	crypto_shash_update(handle->desc, buf, PAGE_SIZE);
+	swsusp_digest_update(handle, buf, PAGE_SIZE);
 	error = write_page(buf, offset, hb);
 	if (error)
 		return error;
@@ -529,7 +488,7 @@ static int flush_swap_writer(struct swap_map_handle *handle)
 static int swap_writer_finish(struct swap_map_handle *handle,
 		unsigned int flags, int error)
 {
-	crypto_shash_final(handle->desc, handle->digest);
+	swsusp_digest_final(handle);
 	if (!error) {
 		pr_info("S");
 		error = mark_swapfiles(handle, flags);
@@ -1005,7 +964,6 @@ static int get_swap_reader(struct swap_map_handle *handle,
 	int error;
 	struct swap_map_page_list *tmp, *last;
 	sector_t offset;
-	struct crypto_shash *tfm;
 
 	*flags_p = swsusp_header->flags;
 
@@ -1044,27 +1002,12 @@ static int get_swap_reader(struct swap_map_handle *handle,
 	handle->k = 0;
 	handle->cur = handle->maps->map;
 
-	tfm = crypto_alloc_shash("sha256", 0, 0);
-	if (IS_ERR(tfm)) {
-		error = -EINVAL;
-		goto err_rel;
-	}
-	handle->desc = kmalloc(sizeof(struct shash_desc) +
-			       crypto_shash_descsize(tfm), GFP_KERNEL);
-	if (!handle->desc) {
-		error = -ENOMEM;
-		goto err_rel;
-	}
+	error = swsusp_digest_setup(handle);
+	if (error)
+		goto err;
 
-	handle->desc->tfm = tfm;
-
-	error = crypto_shash_init(handle->desc);
-	if (error != 0)
-		goto err_free;
 	return 0;
-err_free:
-	kfree(handle->desc);
-err_rel:
+err:
 	release_swap_reader(handle);
 	return error;
 }
@@ -1084,7 +1027,7 @@ static int swap_read_page(struct swap_map_handle *handle, void *buf,
 	error = hib_submit_io(REQ_OP_READ, 0, offset, buf, hb);
 	if (error)
 		return error;
-	crypto_shash_update(handle->desc, buf, PAGE_SIZE);
+	swsusp_digest_update(handle, buf, PAGE_SIZE);
 	if (++handle->k >= MAP_PAGE_ENTRIES) {
 		handle->k = 0;
 		free_page((unsigned long)handle->maps->map);
@@ -1104,11 +1047,13 @@ static int swap_reader_finish(struct swap_map_handle *handle,
 {
 	int ret = 0;
 
-	crypto_shash_final(handle->desc, handle->digest);
-	if (memcmp(handle->digest, swsusp_header->digest,
-		   SHA256_DIGEST_SIZE) != 0) {
-		pr_err("Image digest doesn't match header digest\n");
-		ret = -ENODATA;
+	swsusp_digest_final(handle);
+	if (swsusp_header->flags & SF_VERIFY_IMAGE) {
+		if (memcmp(handle->digest, swsusp_header->digest,
+			   SHA256_DIGEST_SIZE) != 0) {
+			pr_err("Image digest doesn't match header digest\n");
+			ret = -ENODATA;
+		}
 	}
 
 	release_swap_reader(handle);
@@ -1625,6 +1570,8 @@ int swsusp_check(void)
 			error = -EINVAL;
 		}
 
+		if (!error)
+			error = swsusp_decrypt_digest(swsusp_header);
 put:
 		if (error)
 			blkdev_put(hib_resume_bdev, FMODE_READ | FMODE_EXCL);

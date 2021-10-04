@@ -35,6 +35,7 @@
 #include <trace/events/power.h>
 
 #include "power.h"
+#include "tpm.h"
 
 
 static int nocompress;
@@ -82,9 +83,11 @@ void hibernate_release(void)
 
 bool hibernation_available(void)
 {
-	return nohibernate == 0 &&
-		!security_locked_down(LOCKDOWN_HIBERNATION) &&
-		!secretmem_active();
+	if ((security_locked_down(LOCKDOWN_HIBERNATION) &&
+	     !secure_hibernation_available()) || secretmem_active())
+		return false;
+
+	return nohibernate == 0;
 }
 
 /**
@@ -757,7 +760,9 @@ int hibernate(void)
 			flags |= SF_NOCOMPRESS_MODE;
 		else
 		        flags |= SF_CRC32_MODE;
-
+#ifdef CONFIG_SECURE_HIBERNATION
+		flags |= SF_VERIFY_IMAGE;
+#endif
 		pm_pr_dbg("Writing hibernation image.\n");
 		error = swsusp_write(flags);
 		swsusp_free();
