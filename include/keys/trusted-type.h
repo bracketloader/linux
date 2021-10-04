@@ -27,6 +27,7 @@
 
 struct trusted_key_payload {
 	struct rcu_head rcu;
+	unsigned int blob_handle;
 	unsigned int key_len;
 	unsigned int blob_len;
 	unsigned int tpm_blob_len;

@@ -491,11 +491,13 @@ static int tpm2_load_cmd(struct tpm_chip *chip,
 	}
 
 	rc = tpm_transmit_cmd(chip, &buf, 4, "loading blob");
-	if (!rc)
+	if (!rc) {
 		*blob_handle = be32_to_cpup(
 			(__be32 *) &buf.data[TPM_HEADER_SIZE]);
-	else
+		payload->blob_handle = *blob_handle;
+	} else {
 		goto out;
+	}
 
 	rc = tpm2_unpack_blob(payload);
 out:
