@@ -14,12 +14,6 @@ static struct tpm_digest digest = { .alg_id = TPM_ALG_SHA256,
 		   0xf1, 0x22, 0x38, 0x6c, 0x33, 0xb1, 0x14, 0xb7, 0xec, 0x05,
 		   0x5f, 0x49}};
 
-/* sha256(sha256(empty_pcr | digest)) */
-static char expected_digest[] = {0x2f, 0x96, 0xf2, 0x1b, 0x70, 0xa9, 0xe8,
-	0x42, 0x25, 0x8e, 0x66, 0x07, 0xbe, 0xbc, 0xe3, 0x1f, 0x2c, 0x84, 0x4a,
-	0x3f, 0x85, 0x17, 0x31, 0x47, 0x9a, 0xa5, 0x53, 0xbb, 0x23, 0x0c, 0x32,
-	0xf3};
-
 struct skcipher_def {
 	struct scatterlist sg;
 	struct crypto_skcipher *tfm;
@@ -125,6 +119,118 @@ out:
 	return ret;
 }
 
+static int tpm_setup_policy(struct tpm_chip *chip, int *session_handle)
+{
+	struct tpm_header *head;
+	struct tpm_buf buf;
+	char nonce[32] = {0x00};
+	int rc;
+
+	rc = tpm_buf_init(&buf, TPM2_ST_NO_SESSIONS,
+			  TPM2_CC_START_AUTH_SESSION);
+	if (rc)
+		return rc;
+
+	/* Decrypt key */
+	tpm_buf_append_u32(&buf, TPM2_RH_NULL);
+
+	/* Auth entity */
+	tpm_buf_append_u32(&buf, TPM2_RH_NULL);
+
+	/* Nonce - blank is fine here */
+	tpm_buf_append_u16(&buf, sizeof(nonce));
+	tpm_buf_append(&buf, nonce, sizeof(nonce));
+
+	/* Encrypted secret - empty */
+	tpm_buf_append_u16(&buf, 0);
+
+	/* Policy type - session */
+	tpm_buf_append_u8(&buf, 0x01);
+
+	/* Encryption type - NULL */
+	tpm_buf_append_u16(&buf, TPM_ALG_NULL);
+
+	/* Hash type - SHA256 */
+	tpm_buf_append_u16(&buf, TPM_ALG_SHA256);
+
+	rc = tpm_send(chip, buf.data, tpm_buf_length(&buf));
+
+	if (rc)
+		goto out;
+
+	head = (struct tpm_header *)buf.data;
+
+	if (be32_to_cpu(head->length) != sizeof(struct tpm_header) +
+	    sizeof(int) + sizeof(u16) + sizeof(nonce)) {
+		rc = -EINVAL;
+		goto out;
+	}
+
+	*session_handle = be32_to_cpu(*(int *)&buf.data[10]);
+	memcpy(nonce, &buf.data[16], sizeof(nonce));
+
+	tpm_buf_destroy(&buf);
+
+	rc = tpm_buf_init(&buf, TPM2_ST_NO_SESSIONS, TPM2_CC_POLICY_PCR);
+	if (rc)
+		return rc;
+
+	tpm_buf_append_u32(&buf, *session_handle);
+
+	/* PCR digest - read from the PCR, we'll verify creation data later */
+	tpm_buf_append_u16(&buf, 0);
+
+	/* One bank of PCRs */
+	tpm_buf_append_u32(&buf, 1);
+
+	/* SHA256 banks */
+	tpm_buf_append_u16(&buf, TPM_ALG_SHA256);
+
+	/* Select PCRs 5 and 23 */
+	tpm_buf_append_u32(&buf, 0x03200080);
+
+	rc = tpm_send(chip, buf.data, tpm_buf_length(&buf));
+
+	if (rc)
+		goto out;
+
+out:
+	tpm_buf_destroy(&buf);
+	return rc;
+}
+
+static int tpm_policy_get_digest(struct tpm_chip *chip, int handle,
+				 char *digest)
+{
+	struct tpm_header *head;
+	struct tpm_buf buf;
+	int rc;
+
+	rc = tpm_buf_init(&buf, TPM2_ST_NO_SESSIONS, TPM2_CC_POLICY_GET_DIGEST);
+	if (rc)
+		return rc;
+
+	tpm_buf_append_u32(&buf, handle);
+
+	rc = tpm_send(chip, buf.data, tpm_buf_length(&buf));
+
+	if (rc)
+		goto out;
+
+	head = (struct tpm_header *)buf.data;
+	if (be32_to_cpu(head->length) != sizeof(struct tpm_header) +
+	    sizeof(u16) + SHA256_DIGEST_SIZE) {
+		rc = -EINVAL;
+		goto out;
+	}
+
+	memcpy(digest, &buf.data[12], SHA256_DIGEST_SIZE);
+out:
+	tpm_buf_destroy(&buf);
+
+	return rc;
+}
+
 static int tpm_certify_creationdata(struct tpm_chip *chip,
 				    struct trusted_key_payload *payload)
 {
@@ -182,11 +288,14 @@ int swsusp_encrypt_digest(struct swsusp_header *header)
 	const struct cred *cred = current_cred();
 	struct trusted_key_payload *payload;
 	struct tpm_digest *digests = NULL;
+	char policy[SHA256_DIGEST_SIZE];
+	char *policydigest = NULL;
 	struct tpm_chip *chip;
 	struct key *key;
+	int session_handle;
 	int ret, i;
-
-	char *keyinfo = "new\t32\tkeyhandle=0x81000001\tcreationpcrs=0x00800000";
+	char *keyinfo = NULL;
+	char *keytemplate = "new\t32\tkeyhandle=0x81000001\tcreationpcrs=0x00800000\tpolicydigest=%s";
 
 	chip = tpm_default_chip();
 
@@ -213,9 +322,34 @@ int swsusp_encrypt_digest(struct swsusp_header *header)
 			memcpy(&digests[i], &digest, sizeof(digest));
 	}
 
+	policydigest = kmalloc(SHA256_DIGEST_SIZE * 2 + 1, GFP_KERNEL);
+	if (!policydigest) {
+		ret = -ENOMEM;
+		goto reset;
+	}
+
 	ret = tpm_pcr_extend(chip, 23, digests);
 	if (ret != 0)
 		goto reset;
+
+	ret = tpm_setup_policy(chip, &session_handle);
+
+	if (ret != 0)
+		goto reset;
+
+	ret = tpm_policy_get_digest(chip, session_handle, policy);
+
+	if (ret != 0)
+		goto reset;
+
+	bin2hex(policydigest, policy, SHA256_DIGEST_SIZE);
+	policydigest[64] = '\0';
+
+	keyinfo = kasprintf(GFP_KERNEL, keytemplate, policydigest);
+	if (!keyinfo) {
+		ret = -ENOMEM;
+		goto reset;
+	}
 
 	key = key_alloc(&key_type_trusted, "swsusp", GLOBAL_ROOT_UID,
 			GLOBAL_ROOT_GID, cred, 0, KEY_ALLOC_NOT_IN_QUOTA,
@@ -228,6 +362,7 @@ int swsusp_encrypt_digest(struct swsusp_header *header)
 
 	ret = key_instantiate_and_link(key, keyinfo, strlen(keyinfo) + 1, NULL,
 				       NULL);
+
 	if (ret < 0)
 		goto error;
 
@@ -244,6 +379,8 @@ error:
 	key_revoke(key);
 	key_put(key);
 reset:
+	kfree(keyinfo);
+	kfree(policydigest);
 	kfree(digests);
 	tpm_pcr_reset(chip, 23);
 	return ret;
@@ -252,13 +389,17 @@ reset:
 int swsusp_decrypt_digest(struct swsusp_header *header)
 {
 	const struct cred *cred = current_cred();
-	char *keytemplate = "load\t%s\tkeyhandle=0x81000001";
+	char *keytemplate = "load\t%s\tkeyhandle=0x81000001\tpolicyhandle=0x%x";
 	struct trusted_key_payload *payload;
 	struct tpm_digest *digests = NULL;
+	struct tpm_digest pcr5, pcr23;
+	char overall_digest[SHA256_DIGEST_SIZE * 2] = {0,};
+	char compound_digest[SHA256_DIGEST_SIZE];
 	char certhash[SHA256_DIGEST_SIZE];
 	char *blobstring = NULL;
 	char *keyinfo = NULL;
 	struct tpm_chip *chip;
+	int session_handle;
 	struct key *key;
 	int i, ret;
 
@@ -291,15 +432,22 @@ int swsusp_decrypt_digest(struct swsusp_header *header)
 	if (ret != 0)
 		goto reset;
 
-	blobstring = kmalloc(header->blob_len * 2, GFP_KERNEL);
+	ret = tpm_setup_policy(chip, &session_handle);
+
+	if (ret != 0)
+		goto reset;
+
+	blobstring = kmalloc(header->blob_len * 2 + 1, GFP_KERNEL);
 	if (!blobstring) {
 		ret = -ENOMEM;
 		goto reset;
 	}
 
 	bin2hex(blobstring, header->blob, header->blob_len);
+	blobstring[header->blob_len * 2] = '\0';
 
-	keyinfo = kasprintf(GFP_KERNEL, keytemplate, blobstring);
+	keyinfo = kasprintf(GFP_KERNEL, keytemplate, blobstring,
+			    session_handle);
 	if (!keyinfo) {
 		ret = -ENOMEM;
 		goto reset;
@@ -349,13 +497,14 @@ int swsusp_decrypt_digest(struct swsusp_header *header)
 		goto out;
 	}
 
+	/* Expect 3 bytes of selected PCRs */
 	if (*(char *)&payload->creation[6] != 3) {
 		ret = -EINVAL;
 		goto out;
 	}
 
-	/* PCR 23 selected */
-	if (be32_to_cpu(*(int *)&payload->creation[6]) != 0x03000080) {
+	/* PCRs 11 and 23 selected */
+	if (be32_to_cpu(*(int *)&payload->creation[6]) != 0x03200080) {
 		ret = -EINVAL;
 		goto out;
 	}
@@ -366,7 +515,41 @@ int swsusp_decrypt_digest(struct swsusp_header *header)
 		goto out;
 	}
 
-	if (memcmp(&payload->creation[12], expected_digest,
+	/*
+	 * Calculate what the expected digests are - PCR 5 and PCR 23 should
+	 * have been identical at creation time and now
+	 */
+	pcr5.alg_id = pcr23.alg_id = TPM_ALG_SHA256;
+
+	ret = tpm_pcr_read(chip, 5, &pcr5);
+	if (ret != 0) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	ret = tpm_pcr_read(chip, 23, &pcr23);
+	if (ret != 0) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	memcpy(overall_digest, pcr5.digest, SHA256_DIGEST_SIZE);
+	memcpy(overall_digest + SHA256_DIGEST_SIZE, pcr23.digest,
+	       SHA256_DIGEST_SIZE);
+
+	ret = sha256_data(overall_digest, SHA256_DIGEST_SIZE * 2,
+			  compound_digest);
+	if (ret < 0)
+		goto out;
+
+	/*
+	 * And, finally, verify that the key was generated with the same PCR
+	 * values - that tells us it was generated with a kernel that supports
+	 * restricting access to PCR 23 (PCR 5 would be different otherwise)
+	 * and that the image was created by the kernel (PCR 23 would be
+	 * different otherwise). If these digests match, we're good to go.
+	 */
+	if (memcmp(&payload->creation[12], compound_digest,
 		   SHA256_DIGEST_SIZE) != 0) {
 		ret = -EINVAL;
 		goto out;
