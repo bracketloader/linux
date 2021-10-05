@@ -47,6 +47,72 @@ void efi_enable_reset_attack_mitigation(void)
 
 #endif
 
+/*
+ * Measure the presence or absence of a feature into PCR5. PCR 5 is chosen
+ * because it's necessary for there to be an event in-between the
+ * measurement occurring and userland starting. If there isn't, userland can
+ * simply perform an equivalent extension itself and spoof the state. We
+ * could cap the PCR ourselves after extending all security measurements,
+ * but this could be avoided by simply rolling back to an older kernel. We
+ * therefore need a PCR that we can guarantee will be extended after we have
+ * the ability to run in-kernel code, even on kernels that don't implement
+ * this feature.
+ * 
+ * PCR 5 fits that bill - according to spec, ExitBootServices() must cause
+ * an extension of PCR 5. Measuring into PCR 5 therefore guarantees that we
+ * can distinguish between an extension that occurred before
+ * ExitBootServices() (ie, an extension that must have occurred in the boot
+ * stub or some other part of the trusted boot chain) and an extension that
+ * occurred in userland.  In the event that the UEFI stub is skipped, the
+ * bootloader must have called ExitBootServices() on our behalf, and again
+ * we will be able to distinguish the states.
+*/
+void efi_measure_feature(efi_char16_t *description, u32 value)
+{
+	efi_guid_t tcg2_guid = EFI_TCG2_PROTOCOL_GUID;
+	efi_guid_t linux_eventlog_guid = LINUX_EFI_TPM_EVENT_LOG_GUID;
+	efi_status_t status;
+	efi_tcg2_protocol_t *tcg2_protocol = NULL;
+	struct efi_tcg2_log_event *event;
+	struct linux_tpm_feature *feature;
+	int feature_size, description_len;
+	status = efi_bs_call(locate_protocol, &tcg2_guid, NULL,
+			     (void **)&tcg2_protocol);
+	if (status != EFI_SUCCESS)
+		return;
+
+	description_len = efi_char16_strlen(description) + 2;
+	feature_size = sizeof(*feature) + description_len;
+
+	status = efi_bs_call(allocate_pool, EFI_BOOT_SERVICES_DATA,
+			     feature_size, (void **)&feature);
+	if (status != EFI_SUCCESS)
+		return;
+
+	feature->size = feature_size;
+	feature->value = value;
+	memcpy(&feature->description, description, description_len);
+
+	status = efi_bs_call(allocate_pool, EFI_BOOT_SERVICES_DATA,
+			     description_len + sizeof(*event),
+			     (void **)&event);
+	if (status != EFI_SUCCESS)
+		return;
+
+	event->head.size = sizeof(struct efi_tcg2_log_event_head);
+	event->head.version = 1;
+	event->head.pcr_idx = 5;
+	event->head.event_type = EV_LINUX_SECURITY_FEATURE;
+	event->size = sizeof(*event) + description_len;
+	memcpy(&event->data, description, description_len);
+
+	status = efi_call_proto(tcg2_protocol, hash_log_extend_event, 0,
+				(efi_physical_addr_t)feature,
+				(u64) feature_size, event);
+	if (status != EFI_SUCCESS)
+		efi_err("Unable to log Linux security feature to TPM\n");
+}
+
 void efi_retrieve_tpm2_eventlog(void)
 {
 	efi_guid_t tcg2_guid = EFI_TCG2_PROTOCOL_GUID;

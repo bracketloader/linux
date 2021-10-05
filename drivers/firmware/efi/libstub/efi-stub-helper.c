@@ -702,3 +702,23 @@ efi_status_t efi_wait_for_key(unsigned long usec, efi_input_key_t *key)
 
 	return status;
 }
+
+/**
+ * efi_char16_strlen() - Return the length (in 16-bit characters) of a string
+ * @str:	string to measure
+ *
+ * Return the length of an efi_char16_t string in efi_char16s, excluding the
+ * null terminator
+ *
+ * Return:	u32, representing the length of the string
+ */
+u32 efi_char16_strlen(const efi_char16_t *str)
+{
+	int i = 0;
+
+	while (str[i] != 0) {
+		i++;
+	}
+
+	return i;
+}

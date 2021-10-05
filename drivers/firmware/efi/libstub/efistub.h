@@ -677,7 +677,11 @@ union efi_tcg2_protocol {
 						       efi_physical_addr_t *,
 						       efi_physical_addr_t *,
 						       efi_bool_t *);
-		void *hash_log_extend_event;
+		efi_status_t (__efiapi *hash_log_extend_event)(efi_tcg2_protocol_t *,
+							       u64,
+							       efi_physical_addr_t,
+							       u64,
+							       void *);
 		void *submit_command;
 		void *get_active_pcr_banks;
 		void *set_active_pcr_banks;
@@ -693,6 +697,28 @@ union efi_tcg2_protocol {
 		u32 get_result_of_set_active_pcr_banks;
 	} mixed_mode;
 };
+
+struct efi_tcg2_log_event_head {
+	u32 size;
+	u16 version;
+	u32 pcr_idx;
+	u32 event_type;
+} __packed;
+
+struct efi_tcg2_log_event {
+	u32 size;
+	struct efi_tcg2_log_event_head head;
+	u8 data[];
+} __packed;
+
+struct linux_tpm_feature {
+	u32 size;
+	u32 value;
+	efi_char16_t description[];
+} __packed;
+
+#define EV_SEPARATOR 0x04
+#define EV_LINUX_SECURITY_FEATURE 0x4C580001
 
 typedef union efi_load_file_protocol efi_load_file_protocol_t;
 typedef union efi_load_file_protocol efi_load_file2_protocol_t;
@@ -773,6 +799,8 @@ void *get_efi_config_table(efi_guid_t guid);
 /* NOTE: These functions do not print a trailing newline after the string */
 void efi_char16_puts(efi_char16_t *);
 void efi_puts(const char *str);
+
+u32 efi_char16_strlen(const efi_char16_t *str);
 
 __printf(1, 2) int efi_printk(char const *fmt, ...);
 
@@ -856,6 +884,7 @@ static inline void
 efi_enable_reset_attack_mitigation(void) { }
 #endif
 
+void efi_measure_feature(efi_char16_t *description, u32 value);
 void efi_retrieve_tpm2_eventlog(void);
 
 #endif
